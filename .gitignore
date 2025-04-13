@@ -1,0 +1,28 @@
+# Entornos virtuales
+venv/
+env/
+*/env/
+*/venv/
+.env
+.venv
+ENV/
+env.bak/
+venv.bak/
+
+# Python cache si usas Python para scripts/simulaciones aquí
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Archivos de configuración local/secreta
+*.local
+*.private
+
+# Logs
+*.log
+logs/
+*.logs
