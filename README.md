@@ -29,6 +29,7 @@ Este proyecto se encuentra en una **fase conceptual y de investigación**. El tr
 * Definir formalmente el protocolo MSC Ledger.
 * Diseñar y modelar los Tokenomics de $SYNTH.
 * Explorar los desafíos técnicos y económicos.
+* **Plataforma L2 Inicial:** Se ha seleccionado **Arbitrum** como la plataforma L2 inicial para el despliegue del MSC Ledger, debido a su alta escalabilidad, bajos costes de transacción y compatibilidad con EVM.
 
 El prototipado de la *lógica central* de MSC (simulación de agentes y grafos) se realiza en un repositorio separado: [**esraderey/synth-msc**](https://github.com/esraderey/synth-msc). Este repositorio (`msc-network-protocol`) está enfocado en la visión y el diseño de la **infraestructura descentralizada**.
 
