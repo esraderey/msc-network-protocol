@@ -37,26 +37,26 @@ Como pilar fundamental de la visión a largo plazo y la resiliencia, la MSC DAO 
 1.  **Activos Productivos Físicos:**
     * **Tierras Agrícolas y Agua:** Cultivo sostenible de alimentos, reforestación, gestión hídrica responsable. Implementación de AgTech validada por MSC.
     * **Recursos Minerales Estratégicos:** Adquisición y/u operación de concesiones mineras con prácticas ejemplares de sostenibilidad y ética, asegurando materias primas clave para tecnología limpia y esencial. Trazabilidad on-chain.
-    * **Infraestructura Productiva:** Fábricas flexibles y descentralizadas (posiblemente basadas en impresión 3D u otras tecnologías modulares) para producir bienes esenciales (herramientas, repuestos, materiales básicos) basados en diseños abiertos validados en el grafo MSC.
+    * **Infraestructura Productiva:** Fábricas flexibles y descentralizadas para producir bienes esenciales basados en diseños abiertos validados en el grafo MSC.
 2.  **Activos Intelectuales y Educativos:**
-    * El propio **Grafo de Síntesis Colectiva (G')** como un activo fundamental, conteniendo conocimiento validado, diseños de tecnología abierta, procesos optimizados, etc.
-    * **Recursos Educativos:** Materiales de aprendizaje (cursos, tutoriales, datasets) generados, curados y validados colaborativamente dentro del grafo MSC, accesibles para la comunidad.
+    * El propio **Grafo de Síntesis Colectiva (G')** como un activo fundamental, conteniendo conocimiento validado, diseños de tecnología abierta, etc.
+    * **Recursos Educativos:** Materiales de aprendizaje generados, curados y validados colaborativamente dentro del grafo MSC, accesibles para la comunidad.
 
 ## Pago a la Sociedad y Subsidio Universal en Contingencia
 
-La gestión de estos activos se orienta a un "pago" o retorno de valor a la sociedad y a la creación de una red de seguridad:
+La gestión de estos activos se orienta a un retorno de valor a la sociedad y a la creación de una red de seguridad:
 
-1.  **Distribución de Bienes y Acceso:** Facilitar el acceso a alimentos, productos esenciales y recursos educativos generados por el ecosistema, priorizando comunidades vulnerables o participantes activos.
-2.  **Subsidio Universal Básico (SUB) de Resiliencia:** Implementar un sistema de SUB financiado por el **valor intrínseco y los ingresos** del ecosistema completo (producción agrícola/industrial, extracción de recursos, licencias tecnológicas, actividad del DEX). Este SUB, distribuido programáticamente vía $SYNTH (posiblemente a través de identidades descentralizadas), actuaría como una **red de seguridad fundamental y un mecanismo de soporte vital en escenarios hipotéticos de colapso económico o disrupción sistémica global**, garantizando acceso a un mínimo vital basado en recursos reales y conocimiento colectivo.
+1.  **Distribución de Bienes y Acceso:** Facilitar el acceso a alimentos, productos esenciales y recursos educativos generados por el ecosistema.
+2.  **Subsidio Universal Básico (SUB) de Resiliencia:** Implementar un sistema de SUB financiado por el **valor intrínseco y los ingresos** del ecosistema completo. Este SUB, **distribuido en el token nativo $SYNTH, cuya cantidad se ajustará dinámicamente basándose en un oráculo de precios externo (ej. $SYNTH/USD) para entregar un valor real estable** a los beneficiarios (definido por la DAO), actuaría como una **red de seguridad fundamental y un mecanismo de soporte vital en escenarios hipotéticos de colapso económico o disrupción sistémica global**, garantizando acceso a un mínimo vital basado en recursos reales y conocimiento colectivo.
 
 ## Vinculación del Token $SYNTH con la Economía Real y Digital
 
 $SYNTH se convierte en el nexo que integra la economía digital del conocimiento con la economía física de los recursos:
 
-1.  **Agricultura, Minerales, Industria:** $SYNTH como medio para incentivar datos sostenibles, financiar innovación (vía DAO), trazar cadenas de suministro (contratos inteligentes) e intercambiar activos RWA tokenizados en el DEX interno.
-2.  **Nuevas Tecnologías y Educación:** $SYNTH para recompensar I+D, licenciar propiedad intelectual tokenizada, financiar proyectos educativos validados por la comunidad MSC.
-3.  **DEX Interno:** $SYNTH como par principal para intercambiar todos los tipos de activos tokenizados del ecosistema (RWAs, Tech NFTs, Conocimiento Curado, Stablecoins).
-4.  **Mecanismo de Subsidio Universal:** $SYNTH como el vehículo programable, transparente y potencialmente global para la distribución del SUB en escenarios de necesidad o crisis.
+1.  **Agricultura, Minerales, Industria:** $SYNTH para incentivar datos, financiar innovación (DAO), trazar cadenas de suministro, intercambiar Tokens RWA en el DEX.
+2.  **Nuevas Tecnologías y Educación:** $SYNTH para recompensar I+D, licenciar IP tokenizada, financiar proyectos educativos.
+3.  **DEX Interno:** $SYNTH como par principal para todos los activos tokenizados del ecosistema.
+4.  **Mecanismo de Subsidio Universal:** $SYNTH como el **vehículo de distribución programable y transparente (en cantidad ajustada por precio vía oráculo)** para el SUB a escala global.
 
 ## Invitación a Colaboradores
 
