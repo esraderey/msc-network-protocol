@@ -1,0 +1,15 @@
+pyyaml
+networkx
+matplotlib
+torch
+torch_geometric
+sentence-transformers
+Flask
+dash
+dash-bootstrap-components
+requests
+dash-cytoscape
+pandas
+wikipedia
+ecdsa
+base58
