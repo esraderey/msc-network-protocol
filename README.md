@@ -1,7 +1,6 @@
 # MSC Network Protocol
 
-[![Estado](https://img.shields.io/badge/estado-Conceptual-blueviolet)](...)
-[![Licencia](https://img.shields.io/badge/license-AGPL--3.0-red.svg)](LICENSE) [![Discusiones](https://img.shields.io/badge/discuss-GitHub%20Discussions-green)](...) Repositorio dedicado a la conceptualización y futuro desarrollo del **MSC Network Protocol**, una blockchain y ecosistema descentralizado basado en los principios del **Marco de Síntesis Colectiva (MSC)**.
+[![Estado](https://img.shields.io/badge/estado-Conceptual-blueviolet)](...) [![Licencia](https://img.shields.io/badge/license-AGPL--3.0-red.svg)](LICENSE) [![Discusiones](https://img.shields.io/badge/discuss-GitHub%20Discussions-green)](... ) Repositorio dedicado a la conceptualización y futuro desarrollo del **MSC Network Protocol**, una blockchain y ecosistema descentralizado basado en los principios del **Marco de Síntesis Colectiva (MSC)**.
 
 ## Abstract
 
@@ -39,8 +38,8 @@ Invitamos a investigadores, desarrolladores, economistas y visionarios interesad
 
 * Utiliza la pestaña [**Issues**](...) para reportar ideas o preguntas específicas sobre el protocolo/tokenomics.
 * Utiliza [**Discussions**](...) para conversaciones más abiertas.
-* Consulta `CONTRIBUTING.md` (*pendiente*) para guías de contribución.
+* Consulta `CONTRIBUTING.md` para guías de contribución.
 
 ## Licencia
 
-Distribuido bajo la **Licencia AGPLv3** (GNU Affero General Public License v3.0). Ver [LICENSE](LICENSE). ```
+Distribuido bajo la **Licencia AGPLv3** (GNU Affero General Public License v3.0). Ver [LICENSE](LICENSE). 
