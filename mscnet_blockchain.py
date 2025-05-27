@@ -118,7 +118,13 @@ class GraphState:
         self.state_summary = ""
 
     def update_state(self, state_data):
-        self.state_summary = hashlib.sha256(json.dumps(state_data, sort_keys=True).encode("utf-8")).hexdigest()
+        combined = {
+            "prev": self.state_summary,
+            "data": state_data
+        }
+        self.state_summary = hashlib.sha256(
+            json.dumps(combined, sort_keys=True).encode("utf-8")
+        ).hexdigest()
         logging.debug(f"GraphState updated: {self.state_summary}")
 
     def evaluate_consistency_change(self, new_data):
@@ -146,6 +152,8 @@ class MSCNetBlockchain:
         self.reputation_net = ReputationNet()
         self.knowledge_vm = KnowledgeVM()
         self.graph_state = GraphState()
+        # Initialize graph state with genesis block data
+        self.graph_state.update_state(self.chain[0].data)
         logging.info("MSCNetBlockchain initiated with genesis block.")
 
     def create_genesis_block(self):
@@ -168,6 +176,8 @@ class MSCNetBlockchain:
         logging.info(f"Attempting to add block with index {new_block.index}")
         if self.validate_new_block(new_block, last_block):
             self.chain.append(new_block)
+            # Update the global graph state with the new block's data
+            self.graph_state.update_state(new_block.data)
             logging.info(f"Block {new_block.index} successfully added.")
             return new_block
         else:
@@ -234,6 +244,25 @@ class MSCNetBlockchain:
             json.dump([block.__dict__ for block in self.chain], f, indent=2)
         logging.info(f"Exported blockchain to {path}")
 
+    def load_chain(self, path="msc_chain.json"):
+        """Load blockchain data from a JSON file and rebuild internal state."""
+        with open(path, "r") as f:
+            chain_data = json.load(f)
+        self.chain = []
+        self.graph_state.state_summary = ""
+        for block_dict in chain_data:
+            block = Block(
+                block_dict["index"],
+                block_dict["timestamp"],
+                block_dict["data"],
+                block_dict["synth_proof"],
+                block_dict["previous_hash"],
+                block_dict.get("agent_signature")
+            )
+            self.chain.append(block)
+            self.graph_state.update_state(block.data)
+        logging.info(f"Loaded blockchain from {path}")
+
     def __repr__(self):
         chain_data = [{"index": block.index, "hash": block.hash} for block in self.chain]
         return json.dumps(chain_data, indent=2)
@@ -255,6 +284,9 @@ if __name__ == "__main__":
 
     export_parser = subparsers.add_parser("export", help="Export blockchain to JSON")
     export_parser.add_argument("--path", type=str, default="msc_chain.json", help="Export file path")
+
+    load_parser = subparsers.add_parser("load", help="Load blockchain from JSON")
+    load_parser.add_argument("--path", type=str, default="msc_chain.json", help="Import file path")
 
     args = parser.parse_args()
 
@@ -290,5 +322,8 @@ if __name__ == "__main__":
             logging.error("Error adding block:", exc_info=e)
     elif args.command == "export":
         mscnet.export_chain(args.path)
+    elif args.command == "load":
+        mscnet.load_chain(args.path)
+        logging.info(f"Blockchain loaded from {args.path}")
     else:
         parser.print_help()
