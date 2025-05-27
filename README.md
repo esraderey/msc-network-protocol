@@ -31,6 +31,23 @@ Este proyecto se encuentra en una **fase conceptual y de investigación**. El tr
 * **Plataforma L2 Inicial:** Se ha seleccionado **Arbitrum** como la plataforma L2 inicial para el despliegue del MSC Ledger, debido a su alta escalabilidad, bajos costes de transacción y compatibilidad con EVM.
 
 El prototipado de la *lógica central* de MSC (simulación de agentes y grafos) se realiza en un repositorio separado: [**esraderey/synth-msc**](https://github.com/esraderey/synth-msc). Este repositorio (`msc-network-protocol`) está enfocado en la visión y el diseño de la **infraestructura descentralizada**.
+### Demo Webapp
+
+Se incluye un ejemplo basico de aplicacion web en `webapp/` que permite visualizar y anadir bloques a una cadena en memoria.
+Para ejecutarla, instala las dependencias y ejecuta:
+
+```bash
+python webapp/app.py
+```
+
+Luego abre `http://localhost:5000` en tu navegador.
+Para generar una nueva wallet desde la linea de comandos puedes usar:
+```bash
+python wallet_cli.py create
+```
+
+
+ 
 
 ## Colaboración
 
