@@ -3,110 +3,108 @@
 
 # === Core Blockchain Dependencies ===
 # Async and networking
-aiohttp>=3.8.5
-asyncio>=3.4.3
-socketio>=5.9.0
-python-socketio>=5.9.0
+aiohttp>=3.9.1
+socketio>=5.10.0
+python-socketio>=5.10.0
 requests>=2.31.0
-websockets>=11.0.3
+websockets>=12.0.0
 
 # === Cryptography ===
-cryptography>=41.0.4
+cryptography>=41.0.7
 ecdsa>=0.18.0
 ed25519>=1.5
-pycryptodome>=3.18.0
+pycryptodome>=3.19.0
 pysha3>=1.0.2
 base58>=2.1.1
 
 # === Web Framework ===
 Flask>=2.3.3
 Flask-CORS>=4.0.0
-Flask-SocketIO>=5.3.4
-flask-jwt-extended>=4.5.2
+Flask-SocketIO>=5.3.6
+flask-jwt-extended>=4.6.0
 
 # === Dashboard & Visualization ===
-dash>=2.13.0
+dash>=2.14.2
 dash-bootstrap-components>=1.5.0
-dash-cytoscape>=0.3.0
-plotly>=5.17.0
-matplotlib>=3.7.2
-seaborn>=0.12.2
+dash-cytoscape>=1.0.0
+plotly>=5.18.0
+matplotlib>=3.8.2
+seaborn>=0.13.0
 
 # === Blockchain Storage ===
 plyvel>=1.5.0  # LevelDB Python binding
 lmdb>=1.4.1
-redis>=5.0.0
+redis>=5.0.1
 
 # === Data Structures ===
 sortedcontainers>=2.4.0
 pybloom-live>=4.0.0
-networkx>=3.1
+networkx>=3.2.1
 
 # === Ethereum & Web3 ===
-web3>=6.9.0
+web3>=6.11.3
 eth-account>=0.9.0
-eth-utils>=2.2.0
+eth-utils>=2.3.0
 eth-keys>=0.4.0
-eth-typing>=3.4.0
+eth-typing>=3.5.0
 py-evm>=0.7.0a1
 
 # === HD Wallet & BIP Standards ===
 mnemonic>=0.20
 bip32>=3.4
-bip-utils>=2.7.0
+bip-utils>=2.7.1
 
 # === Machine Learning & AI ===
-torch>=2.0.1
-torch_geometric>=2.3.1
+torch>=2.1.2
+torch_geometric>=2.4.0
 sentence-transformers>=2.2.2
-transformers>=4.33.2
-numpy>=1.24.3
-scipy>=1.11.2
-scikit-learn>=1.3.0
+transformers>=4.36.2
+numpy>=1.26.2
+scipy>=1.11.4
+scikit-learn>=1.3.2
 
 # === Natural Language Processing ===
 nltk>=3.8.1
-spacy>=3.6.1
+spacy>=3.7.2
 wikipedia-api>=0.6.0
 
 # === Data Processing ===
-pandas>=2.0.3
+pandas>=2.1.4
 pyyaml>=6.0.1
 python-dotenv>=1.0.0
-jsonschema>=4.19.0
+jsonschema>=4.20.0
 
 # === Database ===
-sqlalchemy>=2.0.20
-alembic>=1.12.0
-sqlite3  # Usually comes with Python
+sqlalchemy>=2.0.23
+alembic>=1.13.0
 
 # === Monitoring & Metrics ===
-prometheus-client>=0.17.1
+prometheus-client>=0.19.0
 grafana-api>=1.0.3
-psutil>=5.9.5
+psutil>=5.9.6
 
 # === Testing ===
-pytest>=7.4.2
-pytest-asyncio>=0.21.1
+pytest>=7.4.3
+pytest-asyncio>=0.23.2
 pytest-cov>=4.1.0
-pytest-mock>=3.11.1
+pytest-mock>=3.12.0
 
 # === Code Quality ===
-black>=23.7.0
+black>=23.12.0
 flake8>=6.1.0
-mypy>=1.5.1
-pylint>=2.17.5
-isort>=5.12.0
+mypy>=1.7.1
+pylint>=3.0.3
+isort>=5.13.2
 
 # === Documentation ===
-sphinx>=7.2.5
+sphinx>=7.2.6
 sphinx-rtd-theme>=1.3.0
-mkdocs>=1.5.2
-mkdocs-material>=9.2.8
+mkdocs>=1.5.3
+mkdocs-material>=9.5.2
 
 # === Utilities ===
 python-dateutil>=2.8.2
-pytz>=2023.3
+pytz>=2023.3.post1
 click>=8.1.7
 colorama>=0.4.6
 tqdm>=4.66.1
@@ -114,20 +112,20 @@ tabulate>=0.9.0
 
 # === QR Code ===
 qrcode[pil]>=7.4.2
-pillow>=10.0.0
+pillow>=10.1.0
 
 # === Hardware Wallet Support (Optional) ===
 # ledgerblue>=0.1.48  # Uncomment if Ledger support needed
 # trezor>=0.13.8  # Uncomment if Trezor support needed
 
 # === API Development ===
-fastapi>=0.103.1  # Alternative to Flask
-uvicorn>=0.23.2  # ASGI server
-pydantic>=2.3.0
+fastapi>=0.105.0  # Alternative to Flask
+uvicorn>=0.24.0  # ASGI server
+pydantic>=2.5.2
 
 # === Performance ===
-numba>=0.58.0
-cython>=3.0.2
+numba>=0.58.1
+cython>=3.0.6
 ujson>=5.8.0
 
 # === Blockchain Specific ===
@@ -140,9 +138,9 @@ argon2-cffi>=23.1.0  # Password hashing
 pyotp>=2.9.0  # Two-factor authentication
 
 # === Development Tools ===
-ipython>=8.15.0
+ipython>=8.18.1
 jupyter>=1.0.0
-jupyterlab>=4.0.5
+jupyterlab>=4.0.9
 python-decouple>=3.8
 
 # === Deployment ===
@@ -154,31 +152,31 @@ kubernetes>=28.1.0
 # === Logging ===
 loguru>=0.7.2
 python-json-logger>=2.0.7
-sentry-sdk>=1.31.0
+sentry-sdk>=1.39.1
 
 # === Rate Limiting ===
 slowapi>=0.1.8
 python-ratelimit>=2.2.1
 
 # === Caching ===
-cachetools>=5.3.1
+cachetools>=5.3.2
 diskcache>=5.6.3
 
 # === Compression ===
-zstandard>=0.21.0
+zstandard>=0.22.0
 lz4>=4.3.2
 
 # === Time Series Data ===
-influxdb-client>=1.37.0
+influxdb-client>=1.38.0
 timescaledb>=0.2.0
 
 # === Message Queue (Optional) ===
-celery>=5.3.1
-kombu>=5.3.2
-amqp>=5.1.1
+celery>=5.3.6
+kombu>=5.3.4
+amqp>=5.2.0
 
 # === Search (Optional) ===
-elasticsearch>=8.9.0
+elasticsearch>=8.11.1
 whoosh>=2.7.4
 
 # === GraphQL (Optional) ===
@@ -186,12 +184,12 @@ graphene>=3.3
 graphql-core>=3.2.3
 
 # === Version Control ===
-GitPython>=3.1.35
+GitPython>=3.1.40
 
 # === Cloud SDKs (Optional) ===
-# boto3>=1.28.44  # AWS
-# google-cloud-storage>=2.10.0  # GCP
-# azure-storage-blob>=12.18.2  # Azure
+# boto3>=1.34.1  # AWS
+# google-cloud-storage>=2.13.0  # GCP
+# azure-storage-blob>=12.19.0  # Azure
 
 # === MSC Specific Dependencies ===
 # Add any custom MSC packages here
