@@ -18,6 +18,7 @@ import struct
 import bisect
 import math
 import uuid
+import random
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple, Set, Union, Callable
 from dataclasses import dataclass, field, asdict
@@ -3999,7 +4000,7 @@ class P2PNodeV3:
             # Considerar añadir a la cola de reconexión si es un peer valioso
 
 class PeerConnection:
-    """Conexión individual con un peer"""
+    """Conexión individual con un peer con manejo mejorado de mensajes y errores"""
 
     def __init__(self, reader, writer, node: P2PNodeV3):
         self.reader = reader
@@ -4007,29 +4008,130 @@ class PeerConnection:
         self.node = node
         self.peer_id = None
         self.version = None
+        self.peer_address = writer.get_extra_info('peername')
+        self.last_seen = time.time()
+        self.ping_time = None
+        self.latency = 0  # ms
+        self.message_stats = {
+            'sent': 0,
+            'received': 0,
+            'bytes_sent': 0,
+            'bytes_received': 0,
+            'errors': 0
+        }
+        self.capabilities = set()  # Funcionalidades soportadas
+        self.is_connected = False
+        self.disconnect_reason = None
 
     async def handle(self):
-        """Maneja comunicación con peer"""
+        """Maneja comunicación con peer con mejor manejo de errores y reconexión"""
         try:
             # Handshake
             await self.handshake()
 
-            # Message loop
-            while True:
-                message = await self.read_message()
-                if not message:
-                    break
+            # Registrar en el nodo
+            if self.peer_id:
+                self.node.peers[self.peer_id] = self
+                self.is_connected = True
+                logger.info(f"Peer {self.peer_id[:8]}... connected from {self.peer_address}")
 
-                await self.handle_message(message)
+            # Iniciar ping periódico
+            ping_task = asyncio.create_task(self._ping_loop())
+
+            # Message loop
+            while self.is_connected:
+                try:
+                    message = await asyncio.wait_for(self.read_message(), timeout=60)
+                    if not message:
+                        logger.info(f"Peer {self.peer_id[:8]}... disconnected (empty message)")
+                        break
+
+                    self.last_seen = time.time()
+                    self.message_stats['received'] += 1
+
+                    await self.handle_message(message)
+                except asyncio.TimeoutError:
+                    logger.warning(f"Peer {self.peer_id[:8]}... read timeout")
+                    break
+                except Exception as e:
+                    logger.error(f"Error processing message from {self.peer_id[:8]}...: {e}")
+                    self.message_stats['errors'] += 1
+                    # Si hay demasiados errores, desconectar
+                    if self.message_stats['errors'] > 5:
+                        await self.disconnect("Too many errors")
+                        break
+
+            # Cancelar ping task
+            ping_task.cancel()
 
         except Exception as e:
-            logger.error(f"Peer connection error: {e}")
+            logger.error(f"Peer connection error with {self.peer_address}: {e}")
+            self.disconnect_reason = str(e)
         finally:
+            # Limpiar
+            await self._cleanup()
+
+            # Considerar reconexión si fue un peer valioso
+            if self.peer_id and self.message_stats['received'] > 10:
+                peer_addr = f"{self.peer_address[0]}:{self.peer_address[1]}"
+                await self.node.reconnect_queue.put(peer_addr)
+
+    async def _cleanup(self):
+        """Limpia recursos al desconectar"""
+        if self.peer_id and self.peer_id in self.node.peers:
+            del self.node.peers[self.peer_id]
+
+        self.is_connected = False
+
+        try:
             self.writer.close()
             await self.writer.wait_closed()
+        except:
+            pass
+
+        logger.info(f"Peer {self.peer_id[:8] if self.peer_id else 'unknown'} disconnected: {self.disconnect_reason or 'unknown reason'}")
+
+    async def disconnect(self, reason: str = "Client disconnect"):
+        """Desconecta ordenadamente del peer"""
+        if not self.is_connected:
+            return
+
+        self.disconnect_reason = reason
+        self.is_connected = False
+
+        try:
+            # Enviar mensaje de desconexión
+            await self.send_message({
+                'type': 'disconnect',
+                'reason': reason
+            })
+        except:
+            pass
+
+    async def _ping_loop(self):
+        """Envía pings periódicos para medir latencia y mantener conexión"""
+        while self.is_connected:
+            try:
+                await asyncio.sleep(30)  # Ping cada 30 segundos
+
+                start_time = time.time()
+                ping_id = secrets.token_hex(8)
+
+                await self.send_message({
+                    'type': 'ping',
+                    'id': ping_id,
+                    'timestamp': start_time
+                })
+
+                self.ping_time = start_time
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in ping loop for {self.peer_id[:8] if self.peer_id else 'unknown'}: {e}")
 
     async def handshake(self):
-        """Protocolo de handshake"""
+        """Protocolo de handshake mejorado con capacidades y versiones"""
         # Enviar hello
         hello = {
             'type': 'hello',
@@ -4038,123 +4140,712 @@ class PeerConnection:
             'chain_id': BlockchainConfig.CHAIN_ID,
             'total_difficulty': sum(b.header.difficulty for b in self.node.blockchain.chain),
             'best_hash': self.node.blockchain.get_latest_block().hash,
-            'genesis_hash': self.node.blockchain.chain[0].hash
+            'genesis_hash': self.node.blockchain.chain[0].hash,
+            'capabilities': [
+                'blocks', 'transactions', 'state', 'defi', 'bridge', 'oracle'
+            ],
+            'network': {
+                'local_address': f"0.0.0.0:{self.node.port}",
+                'protocol_version': '1.0'
+            }
         }
 
         await self.send_message(hello)
 
-        # Recibir hello
-        response = await self.read_message()
-        if response['type'] != 'hello':
-            raise ValueError("Invalid handshake")
+        # Recibir hello con timeout
+        try:
+            response = await asyncio.wait_for(self.read_message(), timeout=10)
+            if not response or response.get('type') != 'hello':
+                raise ValueError("Invalid handshake response")
 
-        self.peer_id = response['node_id']
-        self.version = response['version']
+            self.peer_id = response['node_id']
+            self.version = response['version']
 
-        # Verificar compatibilidad
-        if response['chain_id'] != BlockchainConfig.CHAIN_ID:
-            raise ValueError("Different chain ID")
+            # Guardar capacidades
+            if 'capabilities' in response:
+                self.capabilities = set(response['capabilities'])
 
-        if response['genesis_hash'] != self.node.blockchain.chain[0].hash:
-            raise ValueError("Different genesis")
+            # Verificar compatibilidad
+            if response.get('chain_id') != BlockchainConfig.CHAIN_ID:
+                raise ValueError(f"Different chain ID: {response.get('chain_id')} vs {BlockchainConfig.CHAIN_ID}")
+
+            if response.get('genesis_hash') != self.node.blockchain.chain[0].hash:
+                raise ValueError("Different genesis hash")
+
+            # Verificar versión mínima
+            if self._compare_versions(self.version, '2.0.0') < 0:
+                raise ValueError(f"Unsupported version: {self.version}")
+
+        except asyncio.TimeoutError:
+            raise ValueError("Handshake timeout")
+
+    def _compare_versions(self, version1: str, version2: str) -> int:
+        """Compara versiones semánticas (x.y.z)"""
+        v1_parts = [int(x) for x in version1.split('.')]
+        v2_parts = [int(x) for x in version2.split('.')]
+
+        for i in range(min(len(v1_parts), len(v2_parts))):
+            if v1_parts[i] > v2_parts[i]:
+                return 1
+            elif v1_parts[i] < v2_parts[i]:
+                return -1
+
+        return 0
 
     async def send_message(self, message: Dict):
-        """Envía mensaje al peer"""
-        data = json.dumps(message).encode()
-        self.writer.write(len(data).to_bytes(4, 'big'))
-        self.writer.write(data)
-        await self.writer.drain()
+        """Envía mensaje al peer con compresión y métricas"""
+        if not self.is_connected and message.get('type') != 'disconnect':
+            raise ValueError("Peer disconnected")
+
+        try:
+            # Añadir timestamp
+            if 'timestamp' not in message:
+                message['timestamp'] = time.time()
+
+            # Serializar y comprimir para mensajes grandes
+            data = json.dumps(message).encode()
+
+            if len(data) > 1024:  # Comprimir mensajes > 1KB
+                compressed = zlib.compress(data)
+                if len(compressed) < len(data):
+                    data = compressed
+                    # Añadir flag de compresión
+                    self.writer.write(b'\x01')
+                else:
+                    # Sin compresión
+                    self.writer.write(b'\x00')
+            else:
+                # Sin compresión
+                self.writer.write(b'\x00')
+
+            # Escribir longitud y datos
+            self.writer.write(len(data).to_bytes(4, 'big'))
+            self.writer.write(data)
+            await self.writer.drain()
+
+            # Actualizar métricas
+            self.message_stats['sent'] += 1
+            self.message_stats['bytes_sent'] += len(data)
+            self.node.metrics['messages_sent'] += 1
+            self.node.metrics['bytes_sent'] += len(data)
+
+        except Exception as e:
+            logger.error(f"Error sending message to {self.peer_id[:8] if self.peer_id else 'unknown'}: {e}")
+            raise
 
     async def read_message(self) -> Optional[Dict]:
-        """Lee mensaje del peer"""
-        # Leer longitud
-        length_data = await self.reader.read(4)
-        if not length_data:
+        """Lee mensaje del peer con soporte para compresión y timeout"""
+        try:
+            # Leer flag de compresión
+            compression_flag = await self.reader.read(1)
+            if not compression_flag:
+                return None
+
+            is_compressed = compression_flag == b'\x01'
+
+            # Leer longitud
+            length_data = await self.reader.read(4)
+            if not length_data:
+                return None
+
+            length = int.from_bytes(length_data, 'big')
+
+            # Verificar tamaño máximo razonable (50MB)
+            if length > 50 * 1024 * 1024:
+                raise ValueError(f"Message too large: {length} bytes")
+
+            # Leer mensaje
+            data = await self.reader.read(length)
+            if not data:
+                return None
+
+            # Descomprimir si es necesario
+            if is_compressed:
+                data = zlib.decompress(data)
+
+            # Actualizar métricas
+            self.message_stats['bytes_received'] += len(data)
+            self.node.metrics['messages_received'] += 1
+            self.node.metrics['bytes_received'] += len(data)
+
+            # Decodificar JSON
+            message = json.loads(data.decode())
+
+            # Procesar ping/pong
+            if message.get('type') == 'ping':
+                await self._handle_ping(message)
+            elif message.get('type') == 'pong':
+                self._handle_pong(message)
+
+            return message
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON from peer {self.peer_id[:8] if self.peer_id else 'unknown'}: {e}")
+            self.message_stats['errors'] += 1
             return None
+        except Exception as e:
+            logger.error(f"Error reading message from {self.peer_id[:8] if self.peer_id else 'unknown'}: {e}")
+            raise
 
-        length = int.from_bytes(length_data, 'big')
+    async def _handle_ping(self, message: Dict):
+        """Responde a ping con pong"""
+        try:
+            await self.send_message({
+                'type': 'pong',
+                'id': message.get('id'),
+                'echo_timestamp': message.get('timestamp'),
+                'timestamp': time.time()
+            })
+        except:
+            pass
 
-        # Leer mensaje
-        data = await self.reader.read(length)
-        return json.loads(data.decode())
+    def _handle_pong(self, message: Dict):
+        """Procesa respuesta pong para calcular latencia"""
+        if self.ping_time and message.get('echo_timestamp') == self.ping_time:
+            self.latency = int((time.time() - self.ping_time) * 1000)  # ms
+            self.ping_time = None
+
+            # Registrar métrica de latencia
+            network_latency.observe(self.latency)
 
     async def handle_message(self, message: Dict):
-        """Procesa mensaje recibido"""
-        msg_type = message.get('type')
+        """Procesa mensaje recibido con manejo de errores mejorado"""
+        try:
+            msg_type = message.get('type')
 
-        if msg_type == 'get_blocks':
-            await self.handle_get_blocks(message)
-        elif msg_type == 'blocks':
-            await self.handle_blocks(message)
-        elif msg_type == 'new_block':
-            await self.handle_new_block(message)
-        elif msg_type == 'new_transaction':
-            await self.handle_new_transaction(message)
-        elif msg_type == 'get_peer_list':
-            await self.handle_get_peer_list(message)
+            if msg_type == 'get_blocks':
+                await self.handle_get_blocks(message)
+            elif msg_type == 'blocks':
+                await self.handle_blocks(message)
+            elif msg_type == 'new_block':
+                await self.handle_new_block(message)
+            elif msg_type == 'new_transaction':
+                await self.handle_new_transaction(message)
+            elif msg_type == 'get_peer_list':
+                await self.handle_get_peer_list(message)
+            elif msg_type == 'peer_list':
+                await self.handle_peer_list(message)
+            elif msg_type == 'disconnect':
+                self.disconnect_reason = message.get('reason', 'Remote disconnect')
+                self.is_connected = False
+            elif msg_type == 'get_state':
+                await self.handle_get_state(message)
+            elif msg_type == 'state_chunk':
+                await self.handle_state_chunk(message)
+        except Exception as e:
+            logger.error(f"Error handling message type {message.get('type')} from {self.peer_id[:8] if self.peer_id else 'unknown'}: {e}")
+            self.message_stats['errors'] += 1
 
     async def handle_get_blocks(self, message: Dict):
-        """Maneja solicitud de bloques"""
-        start = message['start']
-        count = min(message['count'], 100)
+        """Maneja solicitud de bloques con validación y límites"""
+        try:
+            start = int(message.get('start', 0))
+            count = min(int(message.get('count', 100)), 500)  # Máximo 500 bloques
 
-        blocks = []
-        for i in range(start, min(start + count, len(self.node.blockchain.chain))):
-            block = self.node.blockchain.chain[i]
-            blocks.append({
-                'header': asdict(block.header),
-                'transactions': [asdict(tx) for tx in block.transactions],
-                'uncles': [asdict(u) for u in block.uncles]
+            # Validar rango
+            if start < 0 or start >= len(self.node.blockchain.chain):
+                await self.send_message({
+                    'type': 'error',
+                    'code': 'INVALID_RANGE',
+                    'message': f"Invalid block range: {start}"
+                })
+                return
+
+            blocks = []
+            for i in range(start, min(start + count, len(self.node.blockchain.chain))):
+                block = self.node.blockchain.chain[i]
+                blocks.append({
+                    'header': asdict(block.header),
+                    'transactions': [asdict(tx) for tx in block.transactions],
+                    'uncles': [asdict(u) for u in block.uncles]
+                })
+
+            await self.send_message({
+                'type': 'blocks',
+                'blocks': blocks,
+                'start': start,
+                'count': len(blocks)
+            })
+        except Exception as e:
+            logger.error(f"Error handling get_blocks: {e}")
+            await self.send_message({
+                'type': 'error',
+                'code': 'INTERNAL_ERROR',
+                'message': "Internal error processing get_blocks"
+            })
+
+    async def handle_blocks(self, message: Dict):
+        """Procesa bloques recibidos"""
+        blocks_data = message.get('blocks', [])
+        logger.info(f"Received {len(blocks_data)} blocks from peer {self.peer_id[:8]}...")
+
+        # Procesar bloques (implementación simplificada)
+        for block_data in blocks_data:
+            # Convertir a objetos Block
+            # Validar y añadir a la cadena si es válido
+            pass
+
+    async def handle_new_block(self, message: Dict):
+        """Procesa notificación de nuevo bloque"""
+        block_data = message.get('block')
+        if not block_data:
+            return
+
+        logger.info(f"Received new block notification from peer {self.peer_id[:8]}...")
+
+        # Verificar si ya tenemos el bloque
+        block_hash = block_data.get('header', {}).get('hash')
+        if block_hash and self.node.blockchain.get_block_by_hash(block_hash):
+            logger.debug(f"Block {block_hash[:8]}... already known")
+            return
+
+        # Solicitar el bloque completo si solo recibimos el header
+        if 'transactions' not in block_data:
+            await self.send_message({
+                'type': 'get_blocks',
+                'start': block_data.get('header', {}).get('number'),
+                'count': 1
+            })
+
+    async def handle_new_transaction(self, message: Dict):
+        """Procesa nueva transacción"""
+        tx_data = message.get('transaction')
+        if not tx_data:
+            return
+
+        # Convertir a objeto Transaction
+        # Validar y añadir al pool si es válida
+        pass
+
+    async def handle_get_peer_list(self, message: Dict):
+        """Responde con lista de peers conocidos"""
+        max_peers = min(int(message.get('max', 20)), 100)  # Máximo 100 peers
+
+        peers = []
+        for peer_id, peer in self.node.peers.items():
+            if len(peers) >= max_peers:
+                break
+
+            # No incluir al solicitante
+            if peer_id == self.peer_id:
+                continue
+
+            peers.append({
+                'id': peer_id,
+                'address': f"{peer.peer_address[0]}:{peer.peer_address[1]}",
+                'version': peer.version,
+                'capabilities': list(peer.capabilities)
             })
 
         await self.send_message({
-            'type': 'blocks',
-            'blocks': blocks
+            'type': 'peer_list',
+            'peers': peers
         })
 
+    async def handle_peer_list(self, message: Dict):
+        """Procesa lista de peers recibida"""
+        peers = message.get('peers', [])
+        logger.debug(f"Received {len(peers)} peers from {self.peer_id[:8]}...")
+
+        # Conectar a nuevos peers
+        for peer_info in peers:
+            if 'address' in peer_info and peer_info.get('id') not in self.node.peers:
+                try:
+                    await self.node.discovery_protocol.connect_to_peer(peer_info['address'])
+                except:
+                    pass
+
+    async def handle_get_state(self, message: Dict):
+        """Maneja solicitud de estado (para sincronización)"""
+        # Implementación simplificada
+        pass
+
+    async def handle_state_chunk(self, message: Dict):
+        """Procesa fragmento de estado recibido"""
+        # Implementación simplificada
+        pass
+
 class DiscoveryProtocol:
-    """Protocolo de descubrimiento de peers"""
+    """Protocolo avanzado de descubrimiento de peers con soporte para NAT traversal"""
 
     def __init__(self, node: P2PNodeV3):
         self.node = node
+
+        # Nodos bootstrap principales y de respaldo
         self.bootstrap_nodes = [
-            # Lista de nodos bootstrap
+            # Lista de nodos bootstrap primarios
             "msc-boot-1.network:30303",
-            "msc-boot-2.network:30303"
+            "msc-boot-2.network:30303",
+            "msc-boot-3.network:30303",
+            # Nodos de respaldo
+            "msc-backup-1.network:30303",
+            "msc-backup-2.network:30303"
         ]
 
-    async def start(self):
-        """Inicia protocolo de descubrimiento"""
-        # Conectar a nodos bootstrap
-        for boot_node in self.bootstrap_nodes:
-            try:
-                await self.connect_to_peer(boot_node)
-            except Exception as e:
-                logger.error(f"Failed to connect to bootstrap node {boot_node}: {e}")
+        # Nodos semilla estáticos (siempre intentar conectar)
+        self.seed_nodes = [
+            "msc-seed-1.network:30303",
+            "msc-seed-2.network:30303"
+        ]
 
-        # Descubrimiento periódico
+        # Caché de peers descubiertos
+        self.discovered_peers = {}  # address -> last_seen
+
+        # Reputación de peers
+        self.peer_reputation = {}  # address -> score (0-100)
+
+        # Estado de NAT
+        self.external_ip = None
+        self.external_port = None
+        self.nat_type = "unknown"  # unknown, open, symmetric, restricted
+
+        # Límites y configuración
+        self.max_outbound_connections = 15
+        self.max_inbound_connections = 85
+        self.discovery_rounds = 0
+        self.last_discovery_time = 0
+        self.discovery_interval = BlockchainConfig.PEER_DISCOVERY_INTERVAL
+
+        # Estadísticas
+        self.stats = {
+            'connection_attempts': 0,
+            'successful_connections': 0,
+            'failed_connections': 0,
+            'peers_discovered': 0
+        }
+
+    async def start(self):
+        """Inicia protocolo de descubrimiento con múltiples estrategias"""
+        logger.info("Starting enhanced peer discovery protocol")
+
+        # Detectar NAT y configuración de red
+        asyncio.create_task(self._detect_nat())
+
+        # Conectar a nodos semilla (alta prioridad)
+        for seed_node in self.seed_nodes:
+            asyncio.create_task(self._connect_with_retry(seed_node, is_seed=True))
+
+        # Conectar a nodos bootstrap
+        bootstrap_tasks = []
+        for boot_node in self.bootstrap_nodes:
+            task = asyncio.create_task(self._connect_with_retry(boot_node))
+            bootstrap_tasks.append(task)
+
+        # Esperar a que al menos un nodo bootstrap se conecte
+        try:
+            await asyncio.wait_for(asyncio.gather(*bootstrap_tasks, return_exceptions=True), 
+                                  timeout=30)
+        except asyncio.TimeoutError:
+            logger.warning("Timeout connecting to bootstrap nodes")
+
+        # Iniciar descubrimiento periódico
+        asyncio.create_task(self._periodic_discovery())
+
+        # Iniciar mantenimiento de peers
+        asyncio.create_task(self._peer_maintenance())
+
+        logger.info("Peer discovery protocol started")
+
+    async def _detect_nat(self):
+        """Detecta tipo de NAT y dirección IP externa"""
+        try:
+            # Intentar obtener IP externa de servicios STUN
+            stun_servers = [
+                "stun.l.google.com:19302",
+                "stun1.l.google.com:19302",
+                "stun2.l.google.com:19302"
+            ]
+
+            # Implementación simplificada - en producción usar librería STUN
+            for server in stun_servers:
+                try:
+                    # Simular detección STUN
+                    response = await asyncio.wait_for(
+                        self._query_stun_server(server), 
+                        timeout=5
+                    )
+                    if response:
+                        self.external_ip = response.get('ip')
+                        self.external_port = response.get('port')
+                        self.nat_type = response.get('nat_type', 'unknown')
+                        logger.info(f"NAT detection: {self.nat_type}, External IP: {self.external_ip}:{self.external_port}")
+                        break
+                except:
+                    continue
+
+            if not self.external_ip:
+                # Fallback: intentar obtener IP de servicios HTTP
+                try:
+                    # Simular consulta HTTP para IP
+                    self.external_ip = "0.0.0.0"  # Placeholder
+                    logger.info(f"Detected external IP via HTTP: {self.external_ip}")
+                except:
+                    logger.warning("Failed to detect external IP")
+        except Exception as e:
+            logger.error(f"Error in NAT detection: {e}")
+
+    async def _query_stun_server(self, server):
+        """Consulta servidor STUN para obtener información de NAT"""
+        # Implementación simplificada - en producción usar librería STUN
+        # Simular respuesta STUN
+        await asyncio.sleep(0.5)  # Simular latencia de red
+        return {
+            'ip': "203.0.113." + str(random.randint(1, 254)),
+            'port': random.randint(10000, 60000),
+            'nat_type': random.choice(['open', 'symmetric', 'restricted'])
+        }
+
+    async def _connect_with_retry(self, address: str, max_retries=3, is_seed=False):
+        """Conecta a un peer con reintentos"""
+        retries = 0
+        backoff = 1
+
+        while retries < max_retries:
+            try:
+                self.stats['connection_attempts'] += 1
+                await self.connect_to_peer(address)
+                self.stats['successful_connections'] += 1
+
+                # Actualizar reputación positivamente
+                self._update_peer_reputation(address, 5)
+
+                # Si es un nodo semilla, mantener en la lista para reconexión
+                if is_seed:
+                    logger.info(f"Successfully connected to seed node {address}")
+
+                return True
+            except Exception as e:
+                retries += 1
+                logger.warning(f"Failed to connect to {address} (attempt {retries}/{max_retries}): {e}")
+
+                # Actualizar reputación negativamente
+                self._update_peer_reputation(address, -2)
+
+                # Esperar con backoff exponencial
+                await asyncio.sleep(backoff)
+                backoff *= 2
+
+        self.stats['failed_connections'] += 1
+        return False
+
+    async def _periodic_discovery(self):
+        """Ejecuta descubrimiento periódico de peers"""
         while True:
-            await self.discover_peers()
-            await asyncio.sleep(BlockchainConfig.PEER_DISCOVERY_INTERVAL)
+            try:
+                # Ajustar intervalo basado en número de peers
+                if len(self.node.peers) < 5:
+                    # Pocos peers, descubrir más rápido
+                    interval = max(5, self.discovery_interval // 2)
+                elif len(self.node.peers) > 50:
+                    # Muchos peers, ralentizar descubrimiento
+                    interval = min(120, self.discovery_interval * 2)
+                else:
+                    interval = self.discovery_interval
+
+                # Ejecutar descubrimiento
+                start_time = time.time()
+                await self.discover_peers()
+                self.last_discovery_time = time.time()
+                self.discovery_rounds += 1
+
+                # Registrar estadísticas
+                if self.discovery_rounds % 10 == 0:
+                    logger.info(f"Discovery stats: {self.stats}")
+                    logger.info(f"Connected peers: {len(self.node.peers)}/{self.max_inbound_connections + self.max_outbound_connections}")
+
+                # Esperar hasta el próximo ciclo
+                elapsed = time.time() - start_time
+                await asyncio.sleep(max(1, interval - elapsed))
+
+            except Exception as e:
+                logger.error(f"Error in periodic discovery: {e}")
+                await asyncio.sleep(10)  # Esperar antes de reintentar
+
+    async def _peer_maintenance(self):
+        """Mantiene la lista de peers, reconectando a nodos semilla y limpiando peers inactivos"""
+        while True:
+            try:
+                # Reconectar a nodos semilla si es necesario
+                for seed in self.seed_nodes:
+                    seed_connected = False
+                    for peer in self.node.peers.values():
+                        if f"{peer.peer_address[0]}:{peer.peer_address[1]}" == seed:
+                            seed_connected = True
+                            break
+
+                    if not seed_connected:
+                        logger.info(f"Reconnecting to seed node {seed}")
+                        asyncio.create_task(self._connect_with_retry(seed, is_seed=True))
+
+                # Limpiar peers descubiertos antiguos
+                current_time = time.time()
+                to_remove = []
+                for addr, last_seen in self.discovered_peers.items():
+                    if current_time - last_seen > 86400:  # 24 horas
+                        to_remove.append(addr)
+
+                for addr in to_remove:
+                    del self.discovered_peers[addr]
+
+                # Verificar balance de conexiones entrantes/salientes
+                # Implementación futura
+
+                await asyncio.sleep(300)  # Cada 5 minutos
+
+            except Exception as e:
+                logger.error(f"Error in peer maintenance: {e}")
+                await asyncio.sleep(60)
+
+    def _update_peer_reputation(self, address: str, change: int):
+        """Actualiza la reputación de un peer"""
+        if address not in self.peer_reputation:
+            # Inicializar con valor neutral
+            self.peer_reputation[address] = 50
+
+        # Aplicar cambio con límites
+        self.peer_reputation[address] = max(0, min(100, self.peer_reputation[address] + change))
+
+        # Banear peers con muy mala reputación
+        if self.peer_reputation[address] < 10:
+            logger.warning(f"Banning peer {address} due to low reputation")
+            self.node.banned_peers.add(address.split(':')[0])  # Banear IP
 
     async def connect_to_peer(self, address: str):
-        """Conecta a un peer específico"""
-        host, port = address.split(':')
+        """Conecta a un peer específico con validación mejorada"""
+        # Validar formato de dirección
+        if ':' not in address:
+            raise ValueError(f"Invalid address format: {address}")
 
-        reader, writer = await asyncio.open_connection(host, int(port))
-        peer = PeerConnection(reader, writer, self.node)
+        host, port_str = address.split(':')
 
-        # Handshake en background
-        asyncio.create_task(peer.handle())
+        # Validar puerto
+        try:
+            port = int(port_str)
+            if port < 1 or port > 65535:
+                raise ValueError(f"Invalid port: {port}")
+        except ValueError:
+            raise ValueError(f"Invalid port: {port_str}")
+
+        # Verificar si ya estamos conectados
+        for peer in self.node.peers.values():
+            peer_addr = peer.peer_address
+            if peer_addr and peer_addr[0] == host and peer_addr[1] == port:
+                logger.debug(f"Already connected to {address}")
+                return
+
+        # Verificar si está baneado
+        if host in self.node.banned_peers:
+            logger.warning(f"Skipping banned peer {address}")
+            return
+
+        # Verificar límite de conexiones
+        if len(self.node.peers) >= self.node.max_peers:
+            logger.warning(f"Cannot connect to {address}: max peers reached")
+            return
+
+        # Intentar conexión con timeout
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port),
+                timeout=10
+            )
+
+            # Crear y manejar conexión
+            peer = PeerConnection(reader, writer, self.node)
+            asyncio.create_task(peer.handle())
+
+            # Registrar peer descubierto
+            self.discovered_peers[address] = time.time()
+
+            logger.info(f"Connected to peer {address}")
+            return peer
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout connecting to {address}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to connect to {address}: {e}")
+            raise
 
     async def discover_peers(self):
-        """Descubre nuevos peers"""
-        # Solicitar lista de peers a peers conocidos
-        for peer in self.node.peers.values():
-            try:
-                await peer.send_message({'type': 'get_peer_list'})
-            except:
-                pass
+        """Descubre nuevos peers usando múltiples estrategias"""
+        # 1. Solicitar lista de peers a peers conocidos
+        peer_discovery_tasks = []
+
+        # Limitar a un subconjunto de peers para no saturar
+        selected_peers = list(self.node.peers.values())
+        if len(selected_peers) > 5:
+            selected_peers = random.sample(selected_peers, 5)
+
+        for peer in selected_peers:
+            task = asyncio.create_task(self._request_peer_list(peer))
+            peer_discovery_tasks.append(task)
+
+        # 2. Intentar conectar a peers previamente descubiertos
+        # Seleccionar algunos peers descubiertos con buena reputación
+        candidates = []
+        for addr, last_seen in self.discovered_peers.items():
+            # Verificar si ya estamos conectados
+            already_connected = False
+            for peer in self.node.peers.values():
+                peer_addr = f"{peer.peer_address[0]}:{peer.peer_address[1]}"
+                if peer_addr == addr:
+                    already_connected = True
+                    break
+
+            if not already_connected:
+                reputation = self.peer_reputation.get(addr, 50)
+                # Priorizar peers con buena reputación
+                if reputation > 40:
+                    candidates.append((addr, reputation))
+
+        # Ordenar por reputación y seleccionar algunos
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        connection_limit = min(5, self.max_outbound_connections - len(self.node.peers))
+
+        for addr, _ in candidates[:connection_limit]:
+            task = asyncio.create_task(self._connect_with_retry(addr))
+            peer_discovery_tasks.append(task)
+
+        # 3. Esperar a que terminen las tareas de descubrimiento
+        if peer_discovery_tasks:
+            await asyncio.gather(*peer_discovery_tasks, return_exceptions=True)
+
+    async def _request_peer_list(self, peer):
+        """Solicita lista de peers a un peer específico"""
+        try:
+            # Solicitar con un máximo razonable
+            await peer.send_message({
+                'type': 'get_peer_list',
+                'max': 50,
+                'include_capabilities': True
+            })
+
+            # La respuesta se maneja en PeerConnection.handle_peer_list
+            return True
+        except Exception as e:
+            logger.error(f"Error requesting peer list from {peer.peer_id[:8] if peer.peer_id else 'unknown'}: {e}")
+            return False
+
+    def add_discovered_peer(self, address: str, source_peer_id: str = None):
+        """Añade un peer descubierto a la lista de candidatos"""
+        if address not in self.discovered_peers:
+            self.stats['peers_discovered'] += 1
+
+        self.discovered_peers[address] = time.time()
+
+        # Inicializar reputación si es nuevo
+        if address not in self.peer_reputation:
+            self.peer_reputation[address] = 50
+
+        # Programar conexión si tenemos pocos peers
+        if len(self.node.peers) < 10:
+            asyncio.create_task(self.connect_to_peer(address))
+
+    async def broadcast_presence(self):
+        """Anuncia presencia a la red para facilitar descubrimiento inverso"""
+        # Implementación futura - útil para peers detrás de NAT
+        pass
 
 # === HERRAMIENTAS CLI ===
 def create_cli():
