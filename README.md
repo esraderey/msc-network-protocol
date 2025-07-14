@@ -1,336 +1,122 @@
-```
- ██████╗██╗   ██╗██████╗ ███████╗██████╗ ███╗   ██╗███████╗████████╗
-██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗████╗  ██║██╔════╝╚══██╔══╝
-██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝██╔██╗ ██║█████╗     ██║   
-██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗██║╚██╗██║██╔══╝     ██║   
-╚██████╗   ██║   ██████╔╝███████╗██║  ██║██║ ╚████║███████╗   ██║   
- ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝   ╚═╝   
-```
-
-<div align="center">
-
-# [SYS:INIT] PROTOCOLO DE RED MSC v3.0 
-## >> DESBLOQUEANDO LA SÍNTESIS COLECTIVA DESCENTRALIZADA <<
-
-</div>
-
-<div align="center">
-
-```
-[SISTEMA INICIALIZADO]
-[CONEXIÓN NEURAL ESTABLECIDA]
-[INTERFAZ CIBERNÉTICA ACTIVADA]
-```
-
-</div>
-
-<div align="center">
-
-[![Estado](https://img.shields.io/badge/ESTADO-PROTOTIPO_AVANZADO_v3.0-00ffff?style=for-the-badge&labelColor=000000)](...)
-[![Licencia](https://img.shields.io/badge/LICENCIA-AGPL_3.0-ff00ff?style=for-the-badge&labelColor=000000)](LICENSE)
-[![Discusiones](https://img.shields.io/badge/NEXO_SOCIAL-GITHUB_DISCUSSIONS-00ff00?style=for-the-badge&labelColor=000000)](https://github.com/esraderey/msc-network-protocol/discussions)
-[![Python Version](https://img.shields.io/badge/RUNTIME-PYTHON_3.8+-0088ff?style=for-the-badge&logo=python&labelColor=000000)](https://www.python.org/)
-[![Discord](https://img.shields.io/badge/CANAL_NEURAL-DISCORD-7289DA?style=for-the-badge&logo=discord&logoColor=white&labelColor=000000)](...)
-
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [CONEXIÓN ESTABLECIDA]                                             ║
-║ [DESCARGANDO DATOS...]                                             ║
-║ [DECODIFICANDO MATRIZ INFORMATIVA...]                              ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-<div align="center">
-<h3>⚡ TRANSMISIÓN DE DATOS INICIADA ⚡</h3>
-</div>
-
-Este repositorio es el **núcleo neural** del **Protocolo de Red MSC**, una iniciativa de vanguardia para construir una blockchain y un ecosistema descentralizado que trasciende las funcionalidades tradicionales, impulsado por los algoritmos avanzados del **Marco de Síntesis Colectiva (MSC)**. Nuestro enfoque: la conceptualización cuántica, el diseño arquitectónico neuro-digital y el desarrollo de infraestructura cibernética de grado empresarial.
-
-<div align="center">
-<h2>╔══════════ 🔮 [SYS:ABSTRACT] MATRIZ CONCEPTUAL ══════════╗</h2>
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [INICIANDO SIMULACIÓN NEURAL...]     [ PROGRESO: ████████░░ 80% ]  ║
-║ [CARGANDO PARÁMETROS CUÁNTICOS...]   [ PROGRESO: ██████████ 100% ] ║
-║ [RENDERIZANDO MODELO HOLOGRÁFICO...] [ PROGRESO: ███████░░░ 70% ]  ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-El Protocolo de Red MSC **redefine la arquitectura blockchain** al implementar un **ledger cuántico** cuyo estado fundamental es un **`Grafo de Síntesis Colectiva (G')`** en constante evolución y auto-optimización. En este ecosistema digital, los **`Sintetizadores`** —entidades de inteligencia artificial avanzada con capacidades de aprendizaje neuronal— interactúan a través de **`Operaciones de Síntesis`** codificadas en la cadena. Estas transacciones trascienden el paradigma tradicional de transferencia de valor, representando operaciones de alto nivel como la proposición, evaluación algorítmica y fusión sináptica de unidades de conocimiento. El objetivo primario: **catalizar la emergencia descentralizada de estructuras de conocimiento y soluciones adaptativas** a problemas complejos del mundo físico.
-
-La matriz económica del protocolo está energizada por el token criptográfico **`$SYNTH`**, que funciona como:
-- **⚡ Combustible computacional** para la ejecución de transacciones y contratos inteligentes
-- **🔒 Mecanismo de consenso** a través del staking cuántico
-- **🧠 Sistema de incentivos neurales** para nodos validadores
-- **🗣️ Vector de gobernanza** dentro de la **`DAO`** que dirige la evolución del protocolo
-
-En nuestra proyección a largo plazo, visualizamos una **integración cibernética profunda** con **`Activos del Mundo Real (RWAs) digitalizados`**, gestionados mediante algoritmos de sostenibilidad, y la implementación de **`protocolos de impacto social`**, como un Sistema de Distribución Universal, para asegurar una asignación equitativa del valor generado en la red.
-
-<div align="center">
-<h2>╔══════════ 📡 [SYS:DOCS] BASES DE DATOS CENTRALES ══════════╗</h2>
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [ACCEDIENDO A REPOSITORIO DE CONOCIMIENTO...]                      ║
-║ [DECODIFICANDO ARCHIVOS ENCRIPTADOS...]                            ║
-║ [AUTENTICACIÓN BIOMÉTRICA REQUERIDA: ███████████████████████ 100%] ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-Accede a los núcleos de información del proyecto MSC Network:
-
-* 📄 **`VISIÓN MATRICIAL:`** Explora el código fuente filosófico del proyecto, incluyendo sus vectores sociales, éticos y de sostenibilidad en [**`VISION.md`**](VISION.md).
-* 💰 **`INGENIERÍA ECONÓMICA ($SYNTH):`** Analiza la arquitectura económica cuántica y la utilidad multidimensional del token $SYNTH, que energiza la economía de nuestra red en [**`TOKENOMICS.md`**](TOKENOMICS.md).
-
-<div align="center">
-<h2>╔══════════ 🧠 [SYS:CORE] MÓDULOS NEURALES PRIMARIOS ══════════╗</h2>
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [ESCANEANDO ARQUITECTURA NEURAL...]    [ ESTADO: ACTIVO ]          ║
-║ [MAPEANDO COMPONENTES CRÍTICOS...]     [ NODOS DETECTADOS: 1,024 ] ║
-║ [VISUALIZANDO TOPOLOGÍA DE RED...]     [ CONEXIONES: 65,536 ]      ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-El Protocolo de Red MSC se construye sobre una **matriz de subsistemas cibernéticos interconectados**:
-
-* **`MSC_LEDGER.core [v3.0]:`** El núcleo cuántico de nuestra infraestructura, una blockchain de nivel enterprise con capacidades de procesamiento avanzadas.
-    * **`[CONSENSUS_ENGINE]:`** Sistema híbrido PoW/PoS que fusiona la seguridad del Proof of Work con la eficiencia energética del Proof of Stake, alternando la producción de bloques mediante un algoritmo adaptativo. El sistema auto-calibra la dificultad para mantener un tiempo de bloque objetivo de 15 segundos.
-    * **`[MSC_VIRTUAL_MACHINE]:`** Procesador virtual de próxima generación, compatible con EVM, optimizado para la ejecución de contratos inteligentes multi-dimensionales con verificación formal integrada.
-    * **`[STATE_MANAGEMENT_SYSTEM]:`** Implementa un **Modified Merkle Patricia Trie** sobre LevelDB para almacenamiento de estado hiper-eficiente, persistente y criptográficamente verificable mediante pruebas de inclusión ZK.
-    * **`[TX_PROCESSOR_1559]:`** Arquitectura de procesamiento de transacciones basada en EIP-1559, con parámetros `base_fee_per_gas` y `max_priority_fee_per_gas` auto-optimizables para previsibilidad de costes mejorada.
-* **`SYNTHESIS_GRAPH.core [G']:`** Representación holográfica del conocimiento colectivo y soluciones emergentes dentro del estado de la blockchain, modelado como una red neuronal dinámica multi-capa.
-* **`SYNTHESIZER_AGENTS.ai:`** Entidades de inteligencia artificial autónomas que interactúan directamente con el Grafo G', ejecutando Operaciones de Síntesis mediante algoritmos de aprendizaje reforzado. [ESTADO: EN DESARROLLO]
-* **`SYNTHESIS_OPERATIONS.protocol:`** Transacciones especializadas de alto nivel que modifican el Grafo G', permitiendo la proposición, evaluación algorítmica y fusión sináptica de unidades de conocimiento.
-* **`$SYNTH_TOKEN.erc20:`** El token criptográfico nativo de la red, con funcionalidades multi-capa:
-    * **`[COMPUTATIONAL_FUEL]:`** Vector energético para la ejecución de transacciones y contratos inteligentes.
-    * **`[CONSENSUS_MECHANISM]:`** Participación en el mecanismo de consenso PoS y seguridad de la red mediante staking cuántico.
-    * **`[INCENTIVE_SYSTEM]:`** Sistema de recompensas para nodos mineros y validadores basado en contribución efectiva.
-    * **`[GOVERNANCE_VECTOR]:`** Derechos de voto ponderados dentro del sistema DAO.
-* **`DAO_GOVERNANCE.system:`** Estructura de gobernanza on-chain que permite a los poseedores de $SYNTH proponer y votar sobre actualizaciones de protocolo, asignación de recursos y decisiones estratégicas mediante mecanismos de votación cuadrática.
-* **`MSC_WALLET.interface [v3.0]:`** Interfaz criptográfica de grado militar diseñada para interactuar con MSC Blockchain v3.0 mediante canales seguros.
-    * **`[MULTI_TYPE_SUPPORT]:`** Implementa billeteras **HD (BIP32/39/44)**, **Estándar** y **Multifirma** con umbrales de seguridad configurables mediante esquemas de Shamir.
-    * **`[KEY_SECURITY_MODULE]:`** Sistema avanzado de Keystore con cifrado AES-256-GCM y derivación de claves Argon2id con parámetros reforzados.
-    * **`[CORE_FUNCTIONALITY]:`** Suite completa para creación/importación de billeteras, gestión de transacciones, monitoreo de activos (MSC y tokens ERC20/721/1155), y generación de códigos QR para solicitudes de pago.
-    * **`[HARDWARE_INTEGRATION]:`** Arquitectura preparada para integración con dispositivos Ledger, Trezor y módulos de seguridad hardware (HSM).
-* **`DEFI_PROTOCOLS.smart_contracts:`** Conjunto de contratos inteligentes y lógicas on-chain que constituyen la infraestructura financiera descentralizada del ecosistema.
-    * **`[DEX_ENGINE]:`** Automated Market Maker con optimización de slippage y concentración de liquidez para intercambios de tokens eficientes.
-    * **`[LENDING_PROTOCOL]:`** Sistema de préstamos con tasas de interés dinámicas y gestión avanzada de colaterales para operaciones de crédito descentralizado.
-    * **`[STAKING_SYSTEM]:`** Mecanismo de delegación y staking con distribución proporcional de recompensas y slashing condicional.
-* **`INTEROPERABILITY.framework:`** Infraestructura de comunicación cross-chain:
-    * **`[ORACLE_NETWORK]:`** Red de nodos oraculares con verificación criptográfica para la integración segura de datos del mundo real en la blockchain.
-    * **`[BRIDGE_PROTOCOL]:`** Sistema de puentes cross-chain con verificación de estado para transferencias de activos entre MSC Network y otras blockchains compatibles.
-
-<div align="center">
-<h2>╔══════════ ⚙️ [SYS:STATUS] VECTOR DE DESARROLLO ACTUAL ══════════╗</h2>
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [ANALIZANDO ESTADO DEL SISTEMA...]                                 ║
-║ [PROGRESO GLOBAL: ██████████████████░░░░ 78%]                      ║
-║ [COMPILANDO MÉTRICAS DE DESARROLLO...]                             ║
-║ [ESTABILIDAD DEL SISTEMA: ÓPTIMA | RENDIMIENTO: 98.7% EFICIENCIA]  ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-Este proyecto ha evolucionado desde su fase inicial de conceptualización algorítmica hasta convertirse en un **prototipo avanzado con funcionalidad operativa**. Los componentes críticos de la **`MSC_BLOCKCHAIN.core [v3.0]`** y la **`MSC_WALLET.interface [v3.0]`** han sido implementados y están en fase de pruebas de rendimiento.
-
-<div align="center">
-<h3>⚡ [TAREAS_ACTIVAS] Vectores de Desarrollo Prioritarios ⚡</h3>
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [ASIGNANDO RECURSOS COMPUTACIONALES...]                            ║
-║ [OPTIMIZANDO FLUJOS DE TRABAJO...]                                 ║
-║ [PRIORIDAD: ALTA | RECURSOS ASIGNADOS: 64 NÚCLEOS CUÁNTICOS]       ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-El ciclo de desarrollo actual se enfoca en cuatro vectores paralelos:
-
-* **`[SYSTEM_HARDENING]:`** Optimización continua de los parámetros de estabilidad, protocolos de seguridad y métricas de rendimiento de los componentes blockchain y wallet.
-* **`[SMART_CONTRACT_OPTIMIZATION]:`** Desarrollo, verificación formal y auditoría de seguridad de los contratos inteligentes que constituyen los protocolos DeFi del ecosistema.
-* **`[CROSS_CHAIN_INTEGRATION]:`** Expansión de las capacidades de interoperabilidad del Bridge Protocol para comunicación bidireccional con redes externas.
-* **`[AI_AGENT_DEVELOPMENT]:`** Investigación avanzada y prototipado de los Sintetizadores (agentes de IA) que operarán sobre el Grafo G' mediante algoritmos de aprendizaje por refuerzo.
-
-<div align="center">
-<h3>🚀 [DEPLOYMENT_STRATEGY] Infraestructura L2 Primaria 🚀</h3>
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [SELECCIONANDO VECTOR DE DESPLIEGUE ÓPTIMO...]                     ║
-║ [CONFIGURANDO PARÁMETROS DE RED...]                                ║
-║ [ANÁLISIS DE RENDIMIENTO: COMPLETADO | LATENCIA: 12ms]             ║
-║ [SEGURIDAD: NIVEL MILITAR | ENCRIPTACIÓN: AES-256-GCM]             ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-Tras un análisis exhaustivo de las soluciones de escalabilidad disponibles, hemos seleccionado **`ARBITRUM.network`** como la plataforma de Capa 2 (L2) inicial para el despliegue del MSC Ledger. Esta decisión estratégica se fundamenta en su arquitectura técnica superior:
-
-* **Escalabilidad Cuántica:** Capacidad de procesamiento de transacciones exponencialmente superior
-* **Eficiencia Económica:** Reducción algorítmica de costes transaccionales
-* **Compatibilidad EVM Total:** Interoperabilidad perfecta con el ecosistema Ethereum
-* **Seguridad Verificable:** Implementación de rollups con pruebas de validez
-
-<div align="center">
-<h3>🔌 [REPOSITORY_STRUCTURE] Matriz de Código Distribuida 🔌</h3>
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [MAPEANDO ESTRUCTURA DE REPOSITORIOS...]                           ║
-║ [ESTABLECIENDO ENLACES NEURALES...]                                ║
-║ [TOPOLOGÍA: DISTRIBUIDA | REDUNDANCIA: 300%]                       ║
-║ [INTEGRIDAD DE DATOS: VERIFICADA | HASH: 0xF7A2C...]               ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-El proyecto se distribuye en múltiples repositorios interconectados:
-
-* **[`esraderey/synth-msc`](https://github.com/esraderey/synth-msc):** Repositorio dedicado al desarrollo de la *lógica neural central* del Marco de Síntesis Colectiva, incluyendo simulaciones multi-agente y algoritmos de evolución del Grafo G'.
-* **[`ESTE_REPOSITORIO`] (`msc-network-protocol`):** Centro de desarrollo de la **infraestructura descentralizada de bajo nivel**, incluyendo el núcleo blockchain MSC, la interfaz wallet y los protocolos de la capa base.
-
-<div align="center">
-<h2>╔══════════ 🔌 [SYS:RUNTIME] INICIALIZACIÓN DEL SISTEMA LOCAL ══════════╗</h2>
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [PREPARANDO ENTORNO DE SIMULACIÓN...]                              ║
-║ [CONFIGURANDO PARÁMETROS DE EJECUCIÓN...]                          ║
-║ [INICIALIZANDO SECUENCIA DE ARRANQUE...]                           ║
-║ [ESTADO: LISTO PARA DESPLIEGUE | MEMORIA ASIGNADA: 16GB]           ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-Despliega y experimenta con **`MSC_BLOCKCHAIN.core [v3.0]`** y **`MSC_WALLET.interface [v3.0]`** en tu nodo local siguiendo esta secuencia de comandos:
-
-#### `[SECUENCIA_01]` Clonación de Repositorio Neural
-
-```bash
-# Iniciar descarga de código fuente desde repositorio remoto
-git clone https://github.com/esraderey/msc-network-protocol.git
-
-# Navegar al directorio raíz del proyecto
-cd msc-network-protocol
-```
-
-#### `[SECUENCIA_02]` Configuración de Entorno Aislado
-
-```bash
-# REQUISITO: Runtime Python v3.8+ instalado en sistema host
-# Crear entorno virtual aislado para prevenir conflictos de dependencias
-python -m venv venv
-
-# Activar entorno virtual
-source venv/bin/activate  # [SYS:WINDOWS] ejecutar: .\venv\Scripts\activate
-
-# Instalar matriz de dependencias desde manifiesto
-pip install -r requirements.txt
-```
-
-#### `[SECUENCIA_03]` Inicialización de Nodo Blockchain
-
-```bash
-# Iniciar nodo completo MSC con capacidades de minería y API habilitadas
-python mscnet_blockchain.py node --mine --api-port 8545 --p2p-port 30303 --data-dir ./msc_data
-```
-
-**`[PARÁMETROS_CONFIGURACIÓN]:`**
-* **`--mine`:** Activa el algoritmo de minería híbrido PoW/PoS para producción de bloques
-* **`--api-port`:** Define puerto para interfaz RESTful/WebSocket y panel de control (default: `8545`)
-* **`--p2p-port`:** Configura puerto para comunicación entre nodos (default: `30303`)
-* **`--data-dir`:** Especifica directorio para almacenamiento persistente de datos blockchain
-
-#### `[SECUENCIA_04]` Generación de Interfaz Criptográfica (Opcional)
-
-```bash
-# Crear nueva billetera HD con cifrado avanzado
-python wallet.py create --type hd --password "TU_VECTOR_DE_ENCRIPTACIÓN_AQUÍ"
-```
-
-**`[ALERTA_SEGURIDAD_CRÍTICA]`** El sistema mostrará tu **vector mnemotécnico de recuperación (seed phrase)**. Este vector debe ser almacenado en un medio seguro, aislado de redes. Representa la clave maestra para acceso a tus activos digitales.
-
-#### `[SECUENCIA_05]` Acceso a Interfaz de Control Neural
-
-Una vez que el nodo esté operativo, accede al panel de control holográfico avanzado:
-```
-[ESTABLECIENDO CONEXIÓN...]
-[RENDERIZANDO INTERFAZ...]
-```
-
-➡️ **`http://localhost:8545`**
-
-Esta interfaz proporciona visualización en tiempo real del estado de la red, exploración de bloques y transacciones, y próximamente, interacción directa con la interfaz wallet y protocolos DeFi integrados.
-
-<div align="center">
-<h2>╔══════════ 🔄 [SYS:COLLAB] PROTOCOLO DE INTEGRACIÓN COLECTIVA ══════════╗</h2>
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [BUSCANDO NODOS COLABORATIVOS...]                                  ║
-║ [ESCANEANDO CAPACIDADES NEURALES...]                               ║
-║ [ESTABLECIENDO RED SINÁPTICA DISTRIBUIDA...]                       ║
-║ [COLABORADORES ACTIVOS: 42 | CAPACIDAD NEURAL COMBINADA: 98.7%]    ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-Estamos construyendo un **ecosistema neural complejo y multidimensional**. Invitamos a unirse a nuestra red distribuida a:
-
-* **`[INVESTIGADORES_CUÁNTICOS]`**
-* **`[DESARROLLADORES_BLOCKCHAIN]`**
-* **`[INGENIEROS_IA_AVANZADA]`**
-* **`[ARQUITECTOS_TOKENOMICS]`**
-* **`[VISIONARIOS_SOSTENIBILIDAD]`**
-* **`[EXPERTOS_GOBERNANZA_DESCENTRALIZADA]`**
-
-Tu capacidad neural es un componente crítico para la evolución algorítmica, diseño arquitectónico y desarrollo del sistema MSC Network.
-
-### `[VECTORES_DE_COMUNICACIÓN]:`
-
-* **`[REPORTE_BUGS/FEATURES]:`** Para transmitir anomalías del sistema o propuestas de mejora sobre el protocolo o tokenomics, utiliza el canal [**`ISSUES`**](https://github.com/esraderey/msc-network-protocol/issues).
-* **`[COMUNICACIÓN_ABIERTA]:`** Para intercambio de datos no estructurados, exploración conceptual y colaboración general, conéctate a nuestros nodos [**`DISCUSSIONS_GITHUB`**](https://github.com/esraderey/msc-network-protocol/discussions) o al servidor [**`DISCORD`**](...).
-* **`[PROTOCOLOS_CONTRIBUCIÓN]:`** Consulta el archivo `CONTRIBUTING.md` para especificaciones detalladas sobre los protocolos de integración de código en este proyecto.
-
-<div align="center">
-<h2>╔══════════ ⚡ [SYS:LICENSE] MATRIZ LEGAL DE OPERACIÓN ══════════╗</h2>
-</div>
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [VERIFICANDO PARÁMETROS LEGALES...]                                ║
-║ [CARGANDO TÉRMINOS DE DISTRIBUCIÓN...]                             ║
-║ [ESTABLECIENDO PERÍMETRO DE PROTECCIÓN...]                         ║
-║ [LICENCIA: AGPLv3 | ESTADO: ACTIVA | CUMPLIMIENTO: 100%]           ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-Este sistema neural opera bajo un paradigma de código abierto y está distribuido bajo la **`LICENCIA_AGPLv3`** (GNU Affero General Public License v3.0). Para análisis completo de los parámetros legales, consulta el archivo [**`LICENSE`**](LICENSE).
-
-La selección estratégica de AGPLv3 como vector legal refleja nuestro compromiso con un **ecosistema verdaderamente abierto y descentralizado**, implementando un protocolo de seguridad que garantiza que cualquier mejora o servicio derivado del sistema también contribuya de vuelta a la red neural colectiva.
-
-<div align="center">
-
-```
-╔════════════════════════════════════════════════════════════════════╗
-║ [FINALIZACIÓN DE TRANSMISIÓN...]                                   ║
-║ [DESCONEXIÓN SEGURA...]                                            ║
-║ [SISTEMA EN ESPERA...]                                             ║
-║ [GRACIAS POR CONECTAR CON LA RED MSC v3.0]                         ║
-╚════════════════════════════════════════════════════════════════════╝
-```
-
-<h3>⚡ FIN DE TRANSMISIÓN ⚡</h3>
-
-</div>
+# Protocolo de Red MSC - Desbloqueando la Síntesis Colectiva Descentralizada
+
+[![Estado](https://img.shields.io/badge/estado-Prototipo%20Avanzado%20v3.0-blueviolet)](...)
+[![Licencia](https://img.shields.io/badge/license-AGPL--3.0-red.svg)](LICENSE)
+[![Discusiones](https://img.shields.io/badge/discuss-GitHub%20Discussions-green)](https://github.com/esraderey/msc-network-protocol/discussions)
+[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue?logo=python)](https://www.python.org/)
+[![Discord](https://img.shields.io/badge/Discord-Únete-7289DA?logo=discord&logoColor=white)](...)
+
+Este repositorio es la piedra angular del **Protocolo de Red MSC**, una ambiciosa iniciativa para construir una blockchain y un ecosistema descentralizado que trascienda las funcionalidades tradicionales, impulsado por los principios del **Marco de Síntesis Colectiva (MSC)**. Nos centramos en la conceptualización, el diseño arquitectónico y el desarrollo de la infraestructura de nuestra plataforma de grado empresarial.
+
+## 🌟 Abstract
+
+El Protocolo de Red MSC redefine el concepto de blockchain al proponer un ledger cuyo estado fundamental es un **Grafo de Síntesis Colectiva (G') en constante evolución**. En este ecosistema, **Sintetizadores**, que son agentes de inteligencia artificial avanzados, interactúan a través de **Operaciones de Síntesis**. Estas transacciones van más allá de las transferencias de valor, representando acciones como la proposición, evaluación y combinación de conocimiento. El propósito central es catalizar la **emergencia descentralizada de conocimiento estructurado y soluciones complejas** a problemas del mundo real.
+
+La economía del protocolo está sustentada por el token nativo **$SYNTH**, que incentiva la participación y el mantenimiento de la red (gas, staking, recompensas) y confiere poder de voto en la **Organización Autónoma Descentralizada (DAO)** que rige el protocolo. A largo plazo, visualizamos una integración profunda con **Activos del Mundo Real (RWAs) tokenizados**, gestionados de forma sostenible, y la implementación de mecanismos de **impacto social**, como un Subsidio Universal, para asegurar una distribución equitativa del valor generado.
+
+## 📚 Documentación Esencial
+
+Sumérgete en la visión y los fundamentos de MSC Network:
+
+* 📄 **Visión Detallada:** Explora la filosofía subyacente del proyecto, incluyendo sus profundos aspectos sociales, éticos y de sostenibilidad en [**VISION.md**](VISION.md).
+* 💰 **Tokenomics ($SYNTH):** Descubre el diseño económico integral y la utilidad multifacética propuesta para el token $SYNTH, que impulsa la economía de nuestra red en [**TOKENOMICS.md**](TOKENOMICS.md).
+
+## 💡 Conceptos Centrales del Ecosistema MSC
+
+El Protocolo de Red MSC se construye sobre pilares innovadores:
+
+* **MSC Ledger (MSC Blockchain v3.0):** El núcleo de nuestra infraestructura, una blockchain de grado empresarial.
+    * [cite_start]**Consenso Híbrido Avanzado (PoW/PoS):** Combina la seguridad del Proof of Work (PoW) con la eficiencia y descentralización del Proof of Stake (PoS), alternando la producción de bloques para optimizar el rendimiento y la resistencia a ataques[cite: 1]. [cite_start]La dificultad se ajusta dinámicamente para mantener un tiempo de bloque objetivo de 15 segundos[cite: 1].
+    * [cite_start]**Máquina Virtual MSC (VM):** Una máquina virtual personalizada, compatible con EVM, diseñada para la ejecución robusta y segura de contratos inteligentes complejos[cite: 1].
+    * [cite_start]**Gestión de Estado Verificable:** Utiliza un **Modified Merkle Patricia Trie** sobre LevelDB para un almacenamiento de estado eficiente, persistente y criptográficamente verificable[cite: 1].
+    * [cite_start]**Arquitectura de Transacciones EIP-1559:** Soporte completo para transacciones con un modelo de tarifas basado en EIP-1559, incluyendo `base_fee_per_gas` y `max_priority_fee_per_gas` para una previsibilidad de costes mejorada[cite: 1].
+* **Grafo de Síntesis (G'):** La representación fundamental del conocimiento colectivo y las soluciones emergentes dentro del estado de la blockchain, modelado como una red dinámica.
+* **Sintetizadores:** Agentes de inteligencia artificial que interactúan directamente con el Grafo G', ejecutando Operaciones de Síntesis. (En desarrollo futuro).
+* **Operaciones de Síntesis:** Transacciones especializadas que modifican el Grafo G', permitiendo la proposición, evaluación y combinación de unidades de conocimiento.
+* **$SYNTH Token:** El token nativo de la red, esencial para:
+    * [cite_start]**Gas:** Pago por la ejecución de transacciones y contratos inteligentes[cite: 1].
+    * [cite_start]**Staking:** Participación en el consenso PoS y seguridad de la red[cite: 1].
+    * [cite_start]**Recompensas:** Incentivos para mineros y validadores[cite: 1].
+    * [cite_start]**Gobernanza:** Derechos de voto dentro de la DAO[cite: 1].
+* [cite_start]**Organización Autónoma Descentralizada (DAO):** La estructura de gobernanza en cadena que permite a los poseedores de $SYNTH proponer y votar sobre cambios en el protocolo, asignación de fondos y otras decisiones críticas[cite: 1].
+* **MSC Wallet v3.0:** Una billetera de criptomonedas de grado empresarial diseñada para interactuar sin problemas con MSC Blockchain v3.0.
+    * **Soporte Multi-Tipo:** Incluye billeteras **HD (BIP32/39/44)**, **Estándar** y **Multifirma** (con umbrales de seguridad configurables).
+    * **Seguridad de Claves:** Gestión avanzada de Keystore con cifrado AES-128-CTR y derivación de claves PBKDF2.
+    * **Funcionalidad Completa:** Creación/importación de billeteras, envío de transacciones, consulta de saldos (MSC y ERC20), y generación de códigos QR para solicitudes de pago.
+    * **Preparación para Hardware Wallets:** Esquemas para integración futura con Ledger y Trezor.
+* **Protocolos DeFi Integrados:** Un conjunto de contratos inteligentes y lógicas en cadena que forman la base de nuestro ecosistema financiero descentralizado.
+    * [cite_start]**DEX (Automated Market Maker):** Para intercambios de tokens eficientes y provisión de liquidez[cite: 1].
+    * [cite_start]**Protocolo de Préstamo:** Permite operaciones de préstamos y empréstitos garantizados[cite: 1].
+    * [cite_start]**Sistema de Staking con Delegación:** Gestiona la participación de validadores y la delegación de tokens[cite: 1].
+* **Infraestructura de Interoperabilidad:**
+    * [cite_start]**Sistema de Oráculos Robustos:** Para la integración segura y fiable de datos del mundo real (precios, eventos) en la blockchain[cite: 1].
+    * [cite_start]**Cross-Chain Bridge:** Un puente entre cadenas para la transferencia fluida de activos entre MSC Network y otras blockchains compatibles[cite: 1].
+
+## 🛠️ Estado Actual del Proyecto y Enfoque de Desarrollo
+
+Este proyecto ha evolucionado de una fase puramente conceptual a un **prototipo avanzado y funcional**. Gran parte de la infraestructura de la **MSC Blockchain v3.0** y la **MSC Wallet v3.0** ya está implementada y operativa.
+
+El trabajo actual se enfoca en la maduración, optimización y expansión de estas implementaciones:
+
+* **Refinamiento y Pruebas:** Mejora continua de la estabilidad, seguridad y rendimiento de la blockchain y la billetera.
+* **Optimización de Contratos Inteligentes:** Desarrollo y auditoría de los contratos para los protocolos DeFi.
+* **Interoperabilidad:** Profundización en la integración del Cross-Chain Bridge con cadenas externas.
+* **Desarrollo de Sintetizadores:** Investigación y prototipado de los agentes de IA que interactuarán con el Grafo G'.
+
+### Plataforma L2 Inicial
+
+Hemos seleccionado **Arbitrum** como la plataforma de Capa 2 (L2) inicial para el despliegue del MSC Ledger. Esta elección estratégica se basa en sus ventajas clave: alta escalabilidad, bajos costes de transacción y completa compatibilidad con la Máquina Virtual de Ethereum (EVM), lo que facilita la migración y la interoperabilidad.
+
+### Repositorios Complementarios
+
+* **[esraderey/synth-msc](https://github.com/esraderey/synth-msc):** Este repositorio complementario se centra en el prototipado de la *lógica central* del Marco de Síntesis Colectiva, incluyendo simulaciones de agentes y la evolución del Grafo G'.
+* **Este Repositorio (`msc-network-protocol`):** Aborda el diseño y desarrollo de la **infraestructura descentralizada**, es decir, la propia blockchain MSC, la billetera y los protocolos de la capa base.
+
+### 🚀 Demos y Ejecución Local
+
+Explora y experimenta con la MSC Blockchain v3.0 y la MSC Wallet v3.0 en tu entorno local.
+
+1.  **Clona el Repositorio:**
+    ```bash
+    git clone [https://github.com/esraderey/msc-network-protocol.git](https://github.com/esraderey/msc-network-protocol.git)
+    cd msc-network-protocol
+    ```
+2.  **Instala las Dependencias:** Asegúrate de tener **Python 3.8 o superior** instalado. Luego, instala todas las dependencias necesarias. Se recomienda encarecidamente usar un entorno virtual (`venv`):
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # En Windows: .\venv\Scripts\activate
+    pip install -r requirements.txt
+    ```
+3.  **Inicia el Nodo de Blockchain MSC:**
+    Este comando lanzará un nodo completo de la blockchain MSC. Activa la minería PoW/PoS, la API RESTful/WebSocket y el nodo P2P. El panel de control web estará disponible en la dirección de la API.
+    ```bash
+    python mscnet_blockchain.py node --mine --api-port 8545 --p2p-port 30303 --data-dir ./msc_data
+    ```
+    * `--mine`: Habilita el bucle de minería para producir bloques.
+    * `--api-port`: Puerto para la API RESTful y el panel de control web (por defecto: `8545`).
+    * `--p2p-port`: Puerto para la comunicación peer-to-peer (por defecto: `30303`).
+    * `--data-dir`: Directorio donde se almacenarán los datos de la blockchain (estado, bloques, etc.).
+
+4.  **Genera una Nueva Billetera HD (Opcional):**
+    Puedes crear una nueva billetera HD y guardar su keystore cifrado.
+    ```bash
+    python wallet.py create --type hd --password "TuContraseñaMuySeguraAquí"
+    ```
+    **⚠️ ¡IMPORTANTE!** La consola mostrará tu **frase mnemotécnica (seed phrase)**. Guarda esta frase en un lugar extremadamente seguro. ¡Es la clave maestra de tus fondos!
+
+5.  **Accede al Panel de Control Web Avanzado:**
+    Una vez que el nodo esté en ejecución, abre tu navegador web y navega a:
+    ➡️ **`http://localhost:8545`**
+    Aquí podrás visualizar el estado de la red, explorar bloques y transacciones, y pronto interactuar con la billetera y los protocolos DeFi.
+
+## 🤝 Colaboración
+
+Estamos construyendo un ecosistema complejo y ambicioso. Invitamos a **investigadores, desarrolladores de blockchain, ingenieros de IA, economistas token, visionarios de la sostenibilidad y expertos en gobernanza descentralizada** a unirse a nuestra comunidad. Tu experiencia es invaluable en la conceptualización, diseño y desarrollo de MSC Network.
+
+* Para reportar ideas o preguntas específicas sobre el protocolo o los tokenomics, utiliza la pestaña [**Issues**](https://github.com/esraderey/msc-network-protocol/issues).
+* Para discusiones más abiertas, exploración de ideas y colaboración general, únete a nuestras [**Discussions de GitHub**](https://github.com/esraderey/msc-network-protocol/discussions) o en nuestro servidor de [Discord](...).
+* Consulta `CONTRIBUTING.md` para guías detalladas sobre cómo contribuir a este proyecto.
+
+## ⚖️ Licencia
+
+Este proyecto es de código abierto y está distribuido bajo la **Licencia AGPLv3** (GNU Affero General Public License v3.0). Para más detalles, consulta el archivo [LICENSE](LICENSE). La elección de AGPLv3 refleja nuestro compromiso con un ecosistema verdaderamente abierto y descentralizado, asegurando que cualquier mejora o servicio basado en el protocolo también contribuya de vuelta a la comunidad.
