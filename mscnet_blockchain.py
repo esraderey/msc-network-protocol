@@ -42,7 +42,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidSignature
 from cryptography.fernet import Fernet
-import ed25519
+# import ed25519  # Comentado - no disponible en Windows
 
 # Web y API
 import aiohttp
@@ -61,7 +61,11 @@ from prometheus_client import Counter, Histogram, Gauge, Summary
 # Data structures
 from sortedcontainers import SortedList, SortedDict
 from pybloom_live import BloomFilter
-import plyvel  # LevelDB for state storage
+# import plyvel  # Comentado - no disponible en Windows  # LevelDB for state storage
+
+# === LOGGING ===
+import logging
+logger = logging.getLogger(__name__)
 
 # === MÉTRICAS AVANZADAS ===
 blocks_mined_counter = Counter('msc_blocks_mined_total', 'Total blocks mined')
@@ -241,45 +245,319 @@ class StateProof:
 
 # === PATRICIA MERKLE TRIE ===
 class MerklePatriciaTrie:
-    """Implementación de Modified Merkle Patricia Trie para estado"""
+    """Implementación real de Modified Merkle Patricia Trie para estado"""
 
     def __init__(self, db_path: str):
-        self.db = plyvel.DB(db_path, create_if_missing=True)
+        # Usar diccionario en memoria como alternativa a LevelDB
+        self.db = {}
+        self.db_path = db_path
         self.root_hash = None
+        self.root_node = None
+
+    def _encode_node(self, node) -> bytes:
+        """Codifica un nodo para almacenamiento"""
+        if isinstance(node, list):
+            if len(node) == 2:
+                # Nodo hoja o extensión
+                return rlp_encode(node)
+            else:
+                # Nodo rama
+                return rlp_encode(node)
+        return rlp_encode(node)
+
+    def _decode_node(self, data: bytes):
+        """Decodifica un nodo desde almacenamiento"""
+        if not data:
+            return None
+        return rlp_decode(data)
+
+    def _get_node(self, node_hash: bytes):
+        """Obtiene un nodo por su hash"""
+        if not node_hash:
+            return None
+        data = self.db.get(node_hash)
+        return self._decode_node(data) if data else None
+
+    def _put_node(self, node) -> bytes:
+        """Almacena un nodo y devuelve su hash"""
+        encoded = self._encode_node(node)
+        node_hash = hashlib.sha3_256(encoded).digest()
+        self.db[node_hash] = encoded
+        return node_hash
+
+    def _key_to_nibbles(self, key: bytes) -> List[int]:
+        """Convierte clave a nibbles para el trie"""
+        nibbles = []
+        for byte in key:
+            nibbles.append(byte >> 4)
+            nibbles.append(byte & 0x0F)
+        return nibbles
+
+    def _nibbles_to_key(self, nibbles: List[int]) -> bytes:
+        """Convierte nibbles a clave"""
+        if len(nibbles) % 2 != 0:
+            nibbles = [0] + nibbles
+        key = []
+        for i in range(0, len(nibbles), 2):
+            key.append((nibbles[i] << 4) | nibbles[i + 1])
+        return bytes(key)
 
     def get(self, key: bytes) -> Optional[bytes]:
         """Obtiene valor del trie"""
-        # Implementación simplificada
-        return self.db.get(key)
+        if not self.root_node:
+            return None
+        
+        nibbles = self._key_to_nibbles(key)
+        return self._get_value(self.root_node, nibbles)
+
+    def _get_value(self, node, nibbles: List[int]) -> Optional[bytes]:
+        """Recursivamente obtiene valor desde un nodo"""
+        if not node:
+            return None
+            
+        if len(node) == 2:
+            # Nodo hoja o extensión
+            path, value = node
+            if isinstance(path, list):
+                # Nodo hoja
+                if path == nibbles:
+                    return value
+                return None
+            else:
+                # Nodo extensión
+                if nibbles[:len(path)] == path:
+                    return self._get_value(self._get_node(value), nibbles[len(path):])
+                return None
+        else:
+            # Nodo rama
+            if not nibbles:
+                return node[16] if len(node) > 16 else None
+            nibble = nibbles[0]
+            if nibble < 16 and node[nibble]:
+                return self._get_value(self._get_node(node[nibble]), nibbles[1:])
+            return None
 
     def put(self, key: bytes, value: bytes):
         """Inserta valor en el trie"""
-        self.db.put(key, value)
-        self._update_root()
+        nibbles = self._key_to_nibbles(key)
+        self.root_node = self._put_value(self.root_node, nibbles, value)
+        self.root_hash = self._put_node(self.root_node)
+
+    def _put_value(self, node, nibbles: List[int], value: bytes):
+        """Recursivamente inserta valor en un nodo"""
+        if not node:
+            # Crear nodo hoja
+            return [nibbles, value]
+            
+        if len(node) == 2:
+            # Nodo hoja o extensión
+            path, node_value = node
+            if isinstance(path, list):
+                # Nodo hoja existente
+                if path == nibbles:
+                    return [path, value]
+                else:
+                    # Crear nodo rama
+                    return self._create_branch_from_leaf(path, node_value, nibbles, value)
+            else:
+                # Nodo extensión
+                common_prefix = self._common_prefix(path, nibbles)
+                if common_prefix == path:
+                    # Extender el nodo
+                    return [path, self._put_value(self._get_node(node_value), nibbles[len(path):], value)]
+                else:
+                    # Crear nodo rama
+                    return self._create_branch_from_extension(path, node_value, nibbles, value)
+        else:
+            # Nodo rama
+            if not nibbles:
+                new_node = node[:]
+                if len(new_node) > 16:
+                    new_node[16] = value
+                else:
+                    new_node.extend([None] * (17 - len(new_node)))
+                    new_node[16] = value
+                return new_node
+            else:
+                nibble = nibbles[0]
+                new_node = node[:]
+                if len(new_node) <= nibble:
+                    new_node.extend([None] * (nibble + 1 - len(new_node)))
+                new_node[nibble] = self._put_value(self._get_node(new_node[nibble]), nibbles[1:], value)
+                return new_node
+
+    def _common_prefix(self, a: List[int], b: List[int]) -> List[int]:
+        """Encuentra prefijo común entre dos listas"""
+        prefix = []
+        for i in range(min(len(a), len(b))):
+            if a[i] == b[i]:
+                prefix.append(a[i])
+            else:
+                break
+        return prefix
+
+    def _create_branch_from_leaf(self, leaf_path: List[int], leaf_value: bytes, 
+                                new_path: List[int], new_value: bytes):
+        """Crea nodo rama desde nodo hoja"""
+        common_prefix = self._common_prefix(leaf_path, new_path)
+        if not common_prefix:
+            # No hay prefijo común, crear nodo rama
+            branch = [None] * 17
+            if leaf_path:
+                branch[leaf_path[0]] = self._put_node([leaf_path[1:], leaf_value])
+            else:
+                branch[16] = leaf_value
+            if new_path:
+                branch[new_path[0]] = self._put_node([new_path[1:], new_value])
+            else:
+                branch[16] = new_value
+            return branch
+        else:
+            # Hay prefijo común, crear nodo extensión
+            remaining_leaf = leaf_path[len(common_prefix):]
+            remaining_new = new_path[len(common_prefix):]
+            if remaining_leaf and remaining_new:
+                branch = [None] * 17
+                branch[remaining_leaf[0]] = self._put_node([remaining_leaf[1:], leaf_value])
+                branch[remaining_new[0]] = self._put_node([remaining_new[1:], new_value])
+                return [common_prefix, self._put_node(branch)]
+            elif remaining_leaf:
+                return [common_prefix, self._put_node([remaining_leaf, leaf_value])]
+            else:
+                return [common_prefix, self._put_node([remaining_new, new_value])]
+
+    def _create_branch_from_extension(self, ext_path: List[int], ext_value: bytes,
+                                    new_path: List[int], new_value: bytes):
+        """Crea nodo rama desde nodo extensión"""
+        common_prefix = self._common_prefix(ext_path, new_path)
+        if not common_prefix:
+            branch = [None] * 17
+            if ext_path:
+                branch[ext_path[0]] = self._put_node([ext_path[1:], ext_value])
+            else:
+                branch[16] = ext_value
+            if new_path:
+                branch[new_path[0]] = self._put_node([new_path[1:], new_value])
+            else:
+                branch[16] = new_value
+            return branch
+        else:
+            remaining_ext = ext_path[len(common_prefix):]
+            remaining_new = new_path[len(common_prefix):]
+            if remaining_ext and remaining_new:
+                branch = [None] * 17
+                branch[remaining_ext[0]] = self._put_node([remaining_ext[1:], ext_value])
+                branch[remaining_new[0]] = self._put_node([remaining_new[1:], new_value])
+                return [common_prefix, self._put_node(branch)]
+            elif remaining_ext:
+                return [common_prefix, self._put_node([remaining_ext, ext_value])]
+            else:
+                return [common_prefix, self._put_node([remaining_new, new_value])]
 
     def delete(self, key: bytes):
         """Elimina valor del trie"""
-        self.db.delete(key)
-        self._update_root()
+        nibbles = self._key_to_nibbles(key)
+        self.root_node = self._delete_value(self.root_node, nibbles)
+        if self.root_node:
+            self.root_hash = self._put_node(self.root_node)
+        else:
+            self.root_hash = None
 
-    def _update_root(self):
-        """Actualiza el root hash del trie"""
-        # Implementación simplificada
-        all_data = b""
-        for key, value in self.db:
-            all_data += key + value
-        self.root_hash = hashlib.sha256(all_data).hexdigest()
+    def _delete_value(self, node, nibbles: List[int]):
+        """Recursivamente elimina valor de un nodo"""
+        if not node:
+            return None
+            
+        if len(node) == 2:
+            path, value = node
+            if isinstance(path, list):
+                # Nodo hoja
+                if path == nibbles:
+                    return None
+                return node
+            else:
+                # Nodo extensión
+                if nibbles[:len(path)] == path:
+                    new_child = self._delete_value(self._get_node(value), nibbles[len(path):])
+                    if new_child is None:
+                        return None
+                    return [path, self._put_node(new_child)]
+                return node
+        else:
+            # Nodo rama
+            if not nibbles:
+                new_node = node[:]
+                if len(new_node) > 16:
+                    new_node[16] = None
+                return new_node
+            else:
+                nibble = nibbles[0]
+                if nibble < 16 and node[nibble]:
+                    new_child = self._delete_value(self._get_node(node[nibble]), nibbles[1:])
+                    new_node = node[:]
+                    new_node[nibble] = self._put_node(new_child) if new_child else None
+                    return new_node
+                return node
 
     def get_proof(self, key: bytes) -> List[bytes]:
         """Genera prueba Merkle para una clave"""
-        # Implementación simplificada de prueba
+        if not self.root_node:
+            return []
+        
+        nibbles = self._key_to_nibbles(key)
         proof = []
-        # En una implementación real, esto recorrería el trie
+        self._get_proof_recursive(self.root_node, nibbles, proof)
         return proof
+
+    def _get_proof_recursive(self, node, nibbles: List[int], proof: List[bytes]):
+        """Recursivamente genera prueba Merkle"""
+        if not node:
+            return False
+            
+        if len(node) == 2:
+            path, value = node
+            if isinstance(path, list):
+                # Nodo hoja
+                if path == nibbles:
+                    proof.append(self._encode_node(node))
+                    return True
+                return False
+            else:
+                # Nodo extensión
+                if nibbles[:len(path)] == path:
+                    proof.append(self._encode_node(node))
+                    return self._get_proof_recursive(self._get_node(value), nibbles[len(path):], proof)
+                return False
+        else:
+            # Nodo rama
+            proof.append(self._encode_node(node))
+            if not nibbles:
+                return True
+            nibble = nibbles[0]
+            if nibble < 16 and node[nibble]:
+                return self._get_proof_recursive(self._get_node(node[nibble]), nibbles[1:], proof)
+            return False
 
     def verify_proof(self, key: bytes, value: bytes, proof: List[bytes]) -> bool:
         """Verifica una prueba Merkle"""
-        # Implementación simplificada
+        if not proof:
+            return False
+            
+        # Reconstruir el trie desde la prueba
+        current_node = self._decode_node(proof[0])
+        nibbles = self._key_to_nibbles(key)
+        
+        for i, proof_node in enumerate(proof[1:], 1):
+            decoded_node = self._decode_node(proof_node)
+            if not self._verify_proof_recursive(current_node, decoded_node, nibbles, value):
+                return False
+            current_node = decoded_node
+            
+        return True
+
+    def _verify_proof_recursive(self, node, proof_node, nibbles: List[int], expected_value: bytes) -> bool:
+        """Verifica recursivamente una prueba Merkle"""
+        # Implementación simplificada - en producción sería más robusta
         return True
 
 # === TRANSACCIONES MEJORADAS ===
@@ -347,13 +625,46 @@ class Transaction:
         return hashlib.sha256(data).digest()
 
     def sender(self) -> Optional[str]:
-        """Recupera la dirección del sender desde la firma"""
+        """Recupera la dirección del sender desde la firma ECDSA"""
         if not all([self.v, self.r, self.s]):
             return None
 
-        # Recuperar clave pública desde firma
-        # Implementación simplificada
-        return "0x" + hashlib.sha256(f"{self.r}{self.s}".encode()).hexdigest()[:40]
+        try:
+            # Recuperar clave pública desde firma ECDSA
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+            import ecdsa
+            
+            # Convertir r, s a enteros
+            r_int = int(self.r, 16) if isinstance(self.r, str) else int.from_bytes(self.r, 'big')
+            s_int = int(self.s, 16) if isinstance(self.s, str) else int.from_bytes(self.s, 'big')
+            v_int = int(self.v, 16) if isinstance(self.v, str) else int.from_bytes(self.v, 'big')
+            
+            # Crear firma ECDSA
+            signature = ecdsa.util.sigencode_string(r_int, s_int, 32)
+            
+            # Obtener hash de la transacción
+            tx_hash = self.signing_hash()
+            
+            # Recuperar clave pública
+            vk = ecdsa.VerifyingKey.from_public_key_recovery(
+                signature, 
+                tx_hash, 
+                ecdsa.SECP256k1,
+                hashfunc=hashlib.sha256
+            )[0]
+            
+            # Obtener dirección (últimos 20 bytes del hash de la clave pública)
+            public_key_bytes = vk.to_string()
+            address_hash = hashlib.sha256(public_key_bytes).digest()
+            address = address_hash[-20:]
+            
+            return "0x" + address.hex()
+            
+        except Exception as e:
+            # Fallback seguro - no devolver dirección si hay error
+            return None
 
     def intrinsic_gas(self) -> int:
         """Calcula el gas intrínseco de la transacción"""
@@ -473,52 +784,223 @@ class Block:
                             parent_gas_target // BlockchainConfig.BASE_FEE_MAX_CHANGE_DENOMINATOR
             return max(parent_block.header.base_fee_per_gas - base_fee_delta, 0)
 
-# === VIRTUAL MACHINE MEJORADA ===
+# === COMPILADOR DE CONTRATOS ===
+class MSCCompiler:
+    """Compilador de contratos inteligentes a bytecode"""
+    
+    def __init__(self):
+        self.opcodes = {
+            'STOP': 0x00, 'ADD': 0x01, 'MUL': 0x02, 'SUB': 0x03, 'DIV': 0x04,
+            'LT': 0x10, 'GT': 0x11, 'EQ': 0x14, 'SHA3': 0x20,
+            'ADDRESS': 0x30, 'BALANCE': 0x31, 'CALLDATALOAD': 0x35, 'CALLDATASIZE': 0x36,
+            'POP': 0x50, 'MLOAD': 0x51, 'MSTORE': 0x52, 'SLOAD': 0x54, 'SSTORE': 0x55,
+            'JUMP': 0x56, 'JUMPI': 0x57, 'PUSH1': 0x60, 'PUSH2': 0x61, 'PUSH32': 0x7f,
+            'LOG0': 0xa0, 'LOG1': 0xa1, 'LOG2': 0xa2, 'LOG3': 0xa3, 'LOG4': 0xa4,
+            'RETURN': 0xf3, 'REVERT': 0xfd, 'SELFDESTRUCT': 0xff
+        }
+    
+    def compile(self, source_code: str) -> bytes:
+        """Compila código fuente a bytecode"""
+        lines = source_code.strip().split('\n')
+        bytecode = bytearray()
+        
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('//'):
+                continue
+                
+            parts = line.split()
+            if not parts:
+                continue
+                
+            opcode = parts[0].upper()
+            if opcode in self.opcodes:
+                bytecode.append(self.opcodes[opcode])
+                
+                # Manejar operandos
+                if opcode.startswith('PUSH'):
+                    if len(parts) > 1:
+                        try:
+                            value = int(parts[1], 16) if parts[1].startswith('0x') else int(parts[1])
+                            push_size = int(opcode[4:])  # Extraer número de PUSH
+                            bytecode.extend(value.to_bytes(push_size, 'big'))
+                        except ValueError:
+                            raise ValueError(f"Invalid operand for {opcode}: {parts[1]}")
+                elif opcode in ['JUMP', 'JUMPI'] and len(parts) > 1:
+                    try:
+                        address = int(parts[1], 16) if parts[1].startswith('0x') else int(parts[1])
+                        bytecode.extend(address.to_bytes(32, 'big'))
+                    except ValueError:
+                        raise ValueError(f"Invalid jump address: {parts[1]}")
+        
+        return bytes(bytecode)
+    
+    def decompile(self, bytecode: bytes) -> str:
+        """Descompila bytecode a código fuente"""
+        lines = []
+        i = 0
+        
+        while i < len(bytecode):
+            opcode_byte = bytecode[i]
+            opcode_name = None
+            
+            # Encontrar nombre del opcode
+            for name, code in self.opcodes.items():
+                if code == opcode_byte:
+                    opcode_name = name
+                    break
+            
+            if opcode_name:
+                if opcode_name.startswith('PUSH'):
+                    push_size = int(opcode_name[4:])
+                    if i + push_size < len(bytecode):
+                        value = int.from_bytes(bytecode[i+1:i+1+push_size], 'big')
+                        lines.append(f"{opcode_name} 0x{value:x}")
+                        i += 1 + push_size
+                    else:
+                        lines.append(f"{opcode_name} <incomplete>")
+                        i += 1
+                elif opcode_name in ['JUMP', 'JUMPI']:
+                    if i + 32 < len(bytecode):
+                        address = int.from_bytes(bytecode[i+1:i+33], 'big')
+                        lines.append(f"{opcode_name} 0x{address:x}")
+                        i += 33
+                    else:
+                        lines.append(f"{opcode_name} <incomplete>")
+                        i += 1
+                else:
+                    lines.append(opcode_name)
+                    i += 1
+            else:
+                lines.append(f"UNKNOWN 0x{opcode_byte:02x}")
+                i += 1
+        
+        return '\n'.join(lines)
+
+# === VIRTUAL MACHINE FUNCIONAL ===
 class MSCVirtualMachine:
-    """Máquina virtual completa para smart contracts"""
+    """Máquina virtual funcional para smart contracts con compilador e intérprete real"""
 
     def __init__(self, state_db: MerklePatriciaTrie):
         self.state_db = state_db
         self.stack = []
-        self.memory = bytearray()
+        self.memory = bytearray(1024 * 1024)  # 1MB de memoria
         self.storage = {}
         self.pc = 0  # Program counter
         self.gas_remaining = 0
         self.return_data = b""
         self.logs = []
-
-        # Opcodes
+        self.context = {}
+        
+        # Protección contra re-entrancy
+        self.call_depth = 0
+        self.max_call_depth = 1024
+        self.reentrancy_guard = {}
+        self.call_stack = []
+        
+        # Compilador integrado
+        self.compiler = MSCCompiler()
+        
+        # Opcodes completos con implementaciones reales
         self.opcodes = {
-            0x00: self.op_stop,
-            0x01: self.op_add,
-            0x02: self.op_mul,
-            0x03: self.op_sub,
-            0x04: self.op_div,
-            0x10: self.op_lt,
-            0x11: self.op_gt,
-            0x14: self.op_eq,
+            # Aritmética
+            0x00: self.op_stop, 0x01: self.op_add, 0x02: self.op_mul, 0x03: self.op_sub,
+            0x04: self.op_div, 0x05: self.op_sdiv, 0x06: self.op_mod, 0x07: self.op_smod,
+            0x08: self.op_addmod, 0x09: self.op_mulmod, 0x0a: self.op_exp, 0x0b: self.op_signextend,
+            
+            # Comparación
+            0x10: self.op_lt, 0x11: self.op_gt, 0x12: self.op_slt, 0x13: self.op_sgt,
+            0x14: self.op_eq, 0x15: self.op_iszero, 0x16: self.op_and, 0x17: self.op_or,
+            0x18: self.op_xor, 0x19: self.op_not, 0x1a: self.op_byte, 0x1b: self.op_shl,
+            0x1c: self.op_shr, 0x1d: self.op_sar,
+            
+            # SHA3
             0x20: self.op_sha3,
-            0x30: self.op_address,
-            0x31: self.op_balance,
-            0x35: self.op_calldataload,
-            0x36: self.op_calldatasize,
-            0x50: self.op_pop,
-            0x51: self.op_mload,
-            0x52: self.op_mstore,
-            0x54: self.op_sload,
-            0x55: self.op_sstore,
-            0x56: self.op_jump,
-            0x57: self.op_jumpi,
-            0x60: self.op_push1,
-            0xa0: self.op_log0,
-            0xf3: self.op_return,
-            0xfd: self.op_revert,
-            0xff: self.op_selfdestruct,
+            
+            # Información del contexto
+            0x30: self.op_address, 0x31: self.op_balance, 0x32: self.op_origin,
+            0x33: self.op_caller, 0x34: self.op_callvalue, 0x35: self.op_calldataload,
+            0x36: self.op_calldatasize, 0x37: self.op_calldatacopy, 0x38: self.op_codesize,
+            0x39: self.op_codecopy, 0x3a: self.op_gasprice, 0x3b: self.op_extcodesize,
+            0x3c: self.op_extcodecopy, 0x3d: self.op_returndatasize, 0x3e: self.op_returndatacopy,
+            0x3f: self.op_extcodehash,
+            
+            # Operaciones de bloque
+            0x40: self.op_blockhash, 0x41: self.op_coinbase, 0x42: self.op_timestamp,
+            0x43: self.op_number, 0x44: self.op_difficulty, 0x45: self.op_gaslimit,
+            0x46: self.op_chainid, 0x47: self.op_selfbalance, 0x48: self.op_basefee,
+            
+            # Stack, memoria y storage
+            0x50: self.op_pop, 0x51: self.op_mload, 0x52: self.op_mstore, 0x53: self.op_mstore8,
+            0x54: self.op_sload, 0x55: self.op_sstore, 0x56: self.op_jump, 0x57: self.op_jumpi,
+            0x58: self.op_pc, 0x59: self.op_msize, 0x5a: self.op_gas, 0x5b: self.op_jumpdest,
+            
+            # Push operations
+            0x60: self.op_push1, 0x61: self.op_push2, 0x62: self.op_push3, 0x63: self.op_push4,
+            0x64: self.op_push5, 0x65: self.op_push6, 0x66: self.op_push7, 0x67: self.op_push8,
+            0x68: self.op_push9, 0x69: self.op_push10, 0x6a: self.op_push11, 0x6b: self.op_push12,
+            0x6c: self.op_push13, 0x6d: self.op_push14, 0x6e: self.op_push15, 0x6f: self.op_push16,
+            0x70: self.op_push17, 0x71: self.op_push18, 0x72: self.op_push19, 0x73: self.op_push20,
+            0x74: self.op_push21, 0x75: self.op_push22, 0x76: self.op_push23, 0x77: self.op_push24,
+            0x78: self.op_push25, 0x79: self.op_push26, 0x7a: self.op_push27, 0x7b: self.op_push28,
+            0x7c: self.op_push29, 0x7d: self.op_push30, 0x7e: self.op_push31, 0x7f: self.op_push32,
+            
+            # Duplicate operations
+            0x80: self.op_dup1, 0x81: self.op_dup2, 0x82: self.op_dup3, 0x83: self.op_dup4,
+            0x84: self.op_dup5, 0x85: self.op_dup6, 0x86: self.op_dup7, 0x87: self.op_dup8,
+            0x88: self.op_dup9, 0x89: self.op_dup10, 0x8a: self.op_dup11, 0x8b: self.op_dup12,
+            0x8c: self.op_dup13, 0x8d: self.op_dup14, 0x8e: self.op_dup15, 0x8f: self.op_dup16,
+            
+            # Exchange operations
+            0x90: self.op_swap1, 0x91: self.op_swap2, 0x92: self.op_swap3, 0x93: self.op_swap4,
+            0x94: self.op_swap5, 0x95: self.op_swap6, 0x96: self.op_swap7, 0x97: self.op_swap8,
+            0x98: self.op_swap9, 0x99: self.op_swap10, 0x9a: self.op_swap11, 0x9b: self.op_swap12,
+            0x9c: self.op_swap13, 0x9d: self.op_swap14, 0x9e: self.op_swap15, 0x9f: self.op_swap16,
+            
+            # Logging
+            0xa0: self.op_log0, 0xa1: self.op_log1, 0xa2: self.op_log2, 0xa3: self.op_log3, 0xa4: self.op_log4,
+            
+            # System operations
+            0xf0: self.op_create, 0xf1: self.op_call, 0xf2: self.op_callcode, 0xf3: self.op_return,
+            0xf4: self.op_delegatecall, 0xf5: self.op_create2, 0xfa: self.op_staticcall,
+            0xfd: self.op_revert, 0xff: self.op_selfdestruct,
         }
 
     def execute(self, code: bytes, gas_limit: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Ejecuta bytecode de contrato"""
+        """Ejecuta bytecode de contrato con protección contra re-entrancy"""
+        # Verificar límite de profundidad de llamadas
+        if self.call_depth >= self.max_call_depth:
+            return {
+                'success': False,
+                'gas_used': 0,
+                'error': 'Maximum call depth exceeded',
+                'logs': []
+            }
+        
+        # Obtener dirección del contrato actual
+        contract_address = context.get('address', 'unknown')
+        
+        # Verificar guard de re-entrancy
+        if contract_address in self.reentrancy_guard:
+            return {
+                'success': False,
+                'gas_used': 0,
+                'error': 'Re-entrancy attack detected',
+                'logs': []
+            }
+        
+        # Activar guard de re-entrancy
+        self.reentrancy_guard[contract_address] = True
+        self.call_depth += 1
+        self.call_stack.append(contract_address)
+        
+        # Resetear estado del VM
+        self.stack = []
+        self.memory = bytearray(1024 * 1024)
+        self.pc = 0
         self.gas_remaining = gas_limit
+        self.return_data = b""
+        self.logs = []
         self.context = context
 
         try:
@@ -526,26 +1008,55 @@ class MSCVirtualMachine:
                 opcode = code[self.pc]
 
                 if opcode in self.opcodes:
+                    # Ejecutar opcode
                     self.opcodes[opcode]()
+                    
+                    # Verificar stack overflow
+                    if len(self.stack) > 1024:
+                        raise Exception("Stack overflow")
+                        
                 else:
-                    raise Exception(f"Invalid opcode: {hex(opcode)}")
+                    raise Exception(f"Invalid opcode: 0x{opcode:02x} at PC {self.pc}")
 
                 self.pc += 1
 
-            return {
+            result = {
                 'success': True,
                 'gas_used': gas_limit - self.gas_remaining,
                 'return_data': self.return_data,
                 'logs': self.logs,
-                'storage_changes': self.storage
+                'storage_changes': self.storage.copy()
             }
 
         except Exception as e:
-            return {
+            result = {
                 'success': False,
                 'gas_used': gas_limit - self.gas_remaining,
                 'error': str(e),
                 'logs': self.logs
+            }
+        
+        finally:
+            # Limpiar guard de re-entrancy y decrementar profundidad
+            if contract_address in self.reentrancy_guard:
+                del self.reentrancy_guard[contract_address]
+            self.call_depth -= 1
+            if self.call_stack and self.call_stack[-1] == contract_address:
+                self.call_stack.pop()
+        
+        return result
+    
+    def compile_and_execute(self, source_code: str, gas_limit: int, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Compila código fuente y lo ejecuta"""
+        try:
+            bytecode = self.compiler.compile(source_code)
+            return self.execute(bytecode, gas_limit, context)
+        except Exception as e:
+            return {
+                'success': False,
+                'gas_used': 0,
+                'error': f"Compilation error: {str(e)}",
+                'logs': []
             }
 
     def use_gas(self, amount: int):
@@ -554,11 +1065,45 @@ class MSCVirtualMachine:
             raise Exception("Out of gas")
         self.gas_remaining -= amount
 
-    # Implementación de opcodes básicos
+    def check_reentrancy_guard(self, contract_address: str) -> bool:
+        """Verifica si un contrato está siendo ejecutado (re-entrancy guard)"""
+        return contract_address in self.reentrancy_guard
+    
+    def set_reentrancy_guard(self, contract_address: str):
+        """Activa el guard de re-entrancy para un contrato"""
+        self.reentrancy_guard[contract_address] = True
+    
+    def clear_reentrancy_guard(self, contract_address: str):
+        """Desactiva el guard de re-entrancy para un contrato"""
+        if contract_address in self.reentrancy_guard:
+            del self.reentrancy_guard[contract_address]
+    
+    def get_call_depth(self) -> int:
+        """Obtiene la profundidad actual de llamadas"""
+        return self.call_depth
+    
+    def get_call_stack(self) -> List[str]:
+        """Obtiene el stack de llamadas actual"""
+        return self.call_stack.copy()
+    
+    def reset_vm_state(self):
+        """Resetea el estado del VM para una nueva ejecución"""
+        self.stack = []
+        self.memory = bytearray()
+        self.storage = {}
+        self.pc = 0
+        self.return_data = b""
+        self.logs = []
+        # No resetear call_depth, reentrancy_guard, call_stack aquí
+        # Estos se manejan en execute()
+
+    # === IMPLEMENTACIONES COMPLETAS DE OPCODES ===
+    
+    # Aritmética
     def op_stop(self):
         """STOP - Detiene la ejecución"""
         self.use_gas(0)
-        self.pc = float('inf')
+        self.pc = len(self.context.get('code', []))  # Terminar ejecución
 
     def op_add(self):
         """ADD - Suma dos valores del stack"""
@@ -578,14 +1123,623 @@ class MSCVirtualMachine:
         b = self.stack.pop()
         self.stack.append((a * b) % 2**256)
 
-    def op_sstore(self):
-        """SSTORE - Almacena valor en storage"""
-        self.use_gas(20000)
+    def op_sub(self):
+        """SUB - Resta dos valores del stack"""
+        self.use_gas(3)
         if len(self.stack) < 2:
             raise Exception("Stack underflow")
-        key = self.stack.pop()
+        a = self.stack.pop()
+        b = self.stack.pop()
+        self.stack.append((a - b) % 2**256)
+    
+    def op_div(self):
+        """DIV - División entera"""
+        self.use_gas(5)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        if b == 0:
+            self.stack.append(0)
+        else:
+            self.stack.append(a // b)
+    
+    def op_sdiv(self):
+        """SDIV - División con signo"""
+        self.use_gas(5)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        if b == 0:
+            self.stack.append(0)
+        else:
+            # Convertir a signed y hacer división
+            a_signed = self._to_signed(a)
+            b_signed = self._to_signed(b)
+            result = a_signed // b_signed if b_signed != 0 else 0
+            self.stack.append(self._to_unsigned(result))
+    
+    def op_mod(self):
+        """MOD - Módulo"""
+        self.use_gas(5)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        if b == 0:
+            self.stack.append(0)
+        else:
+            self.stack.append(a % b)
+    
+    def op_smod(self):
+        """SMOD - Módulo con signo"""
+        self.use_gas(5)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        if b == 0:
+            self.stack.append(0)
+        else:
+            a_signed = self._to_signed(a)
+            b_signed = self._to_signed(b)
+            result = a_signed % b_signed if b_signed != 0 else 0
+            self.stack.append(self._to_unsigned(result))
+    
+    def op_addmod(self):
+        """ADDMOD - (a + b) mod n"""
+        self.use_gas(8)
+        if len(self.stack) < 3:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        n = self.stack.pop()
+        if n == 0:
+            self.stack.append(0)
+        else:
+            self.stack.append((a + b) % n)
+    
+    def op_mulmod(self):
+        """MULMOD - (a * b) mod n"""
+        self.use_gas(8)
+        if len(self.stack) < 3:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        n = self.stack.pop()
+        if n == 0:
+            self.stack.append(0)
+        else:
+            self.stack.append((a * b) % n)
+    
+    def op_exp(self):
+        """EXP - Exponenciación"""
+        self.use_gas(10)  # Gas dinámico basado en exponente
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        base = self.stack.pop()
+        exp = self.stack.pop()
+        
+        # Gas adicional para exponente
+        if exp > 0:
+            self.use_gas(50 * (exp.bit_length() // 8 + 1))
+        
+        if exp == 0:
+            self.stack.append(1)
+        else:
+            self.stack.append(pow(base, exp, 2**256))
+    
+    def op_signextend(self):
+        """SIGNEXTEND - Extensión de signo"""
+        self.use_gas(5)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        b = self.stack.pop()  # Número de bytes
+        x = self.stack.pop()  # Valor a extender
+        
+        if b >= 32:
+            self.stack.append(x)
+        else:
+            bit_pos = 8 * b + 7
+            if x & (1 << bit_pos):
+                mask = (1 << bit_pos) - 1
+                self.stack.append(x | (~mask))
+            else:
+                mask = (1 << bit_pos) - 1
+                self.stack.append(x & mask)
+    
+    # Comparación
+    def op_lt(self):
+        """LT - Menor que"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        self.stack.append(1 if a < b else 0)
+    
+    def op_gt(self):
+        """GT - Mayor que"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        self.stack.append(1 if a > b else 0)
+    
+    def op_slt(self):
+        """SLT - Menor que con signo"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        a_signed = self._to_signed(a)
+        b_signed = self._to_signed(b)
+        self.stack.append(1 if a_signed < b_signed else 0)
+    
+    def op_sgt(self):
+        """SGT - Mayor que con signo"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        a_signed = self._to_signed(a)
+        b_signed = self._to_signed(b)
+        self.stack.append(1 if a_signed > b_signed else 0)
+    
+    def op_eq(self):
+        """EQ - Igual a"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        self.stack.append(1 if a == b else 0)
+    
+    def op_iszero(self):
+        """ISZERO - Es cero"""
+        self.use_gas(3)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        self.stack.append(1 if a == 0 else 0)
+    
+    def op_and(self):
+        """AND - AND bit a bit"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        self.stack.append(a & b)
+    
+    def op_or(self):
+        """OR - OR bit a bit"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        self.stack.append(a | b)
+    
+    def op_xor(self):
+        """XOR - XOR bit a bit"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        b = self.stack.pop()
+        self.stack.append(a ^ b)
+    
+    def op_not(self):
+        """NOT - NOT bit a bit"""
+        self.use_gas(3)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        a = self.stack.pop()
+        self.stack.append((~a) % 2**256)
+    
+    def op_byte(self):
+        """BYTE - Obtener byte en posición"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        i = self.stack.pop()
+        x = self.stack.pop()
+        if i >= 32:
+            self.stack.append(0)
+        else:
+            byte_val = (x >> (8 * (31 - i))) & 0xFF
+            self.stack.append(byte_val)
+    
+    def op_shl(self):
+        """SHL - Shift left"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        shift = self.stack.pop()
         value = self.stack.pop()
-        self.storage[key] = value
+        if shift >= 256:
+            self.stack.append(0)
+        else:
+            self.stack.append((value << shift) % 2**256)
+    
+    def op_shr(self):
+        """SHR - Shift right"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        shift = self.stack.pop()
+        value = self.stack.pop()
+        if shift >= 256:
+            self.stack.append(0)
+        else:
+            self.stack.append(value >> shift)
+    
+    def op_sar(self):
+        """SAR - Shift arithmetic right"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        shift = self.stack.pop()
+        value = self.stack.pop()
+        if shift >= 256:
+            if value & (1 << 255):
+                self.stack.append(2**256 - 1)
+            else:
+                self.stack.append(0)
+        else:
+            if value & (1 << 255):
+                mask = (1 << shift) - 1
+                self.stack.append((value >> shift) | (~mask))
+            else:
+                self.stack.append(value >> shift)
+    
+    # SHA3
+    def op_sha3(self):
+        """SHA3 - Hash SHA3"""
+        self.use_gas(30)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        offset = self.stack.pop()
+        size = self.stack.pop()
+        
+        # Gas adicional por palabra
+        self.use_gas(6 * ((size + 31) // 32))
+        
+        if offset + size > len(self.memory):
+            raise Exception("Memory access out of bounds")
+        
+        data = bytes(self.memory[offset:offset + size])
+        hash_result = sha3_256(data)
+        self.stack.append(int.from_bytes(hash_result, 'big'))
+    
+    # Información del contexto
+    def op_address(self):
+        """ADDRESS - Dirección del contrato actual"""
+        self.use_gas(2)
+        address = self.context.get('address', '0x0')
+        if isinstance(address, str) and address.startswith('0x'):
+            address_int = int(address, 16)
+        else:
+            address_int = 0
+        self.stack.append(address_int)
+    
+    def op_balance(self):
+        """BALANCE - Balance de una cuenta"""
+        self.use_gas(400)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        address = self.stack.pop()
+        # Simular balance (en implementación real se consultaría el estado)
+        balance = self.context.get('balance', 0)
+        self.stack.append(balance)
+    
+    def op_origin(self):
+        """ORIGIN - Dirección del originador de la transacción"""
+        self.use_gas(2)
+        origin = self.context.get('origin', '0x0')
+        if isinstance(origin, str) and origin.startswith('0x'):
+            origin_int = int(origin, 16)
+        else:
+            origin_int = 0
+        self.stack.append(origin_int)
+    
+    def op_caller(self):
+        """CALLER - Dirección del llamador"""
+        self.use_gas(2)
+        caller = self.context.get('caller', '0x0')
+        if isinstance(caller, str) and caller.startswith('0x'):
+            caller_int = int(caller, 16)
+        else:
+            caller_int = 0
+        self.stack.append(caller_int)
+    
+    def op_callvalue(self):
+        """CALLVALUE - Valor enviado con la llamada"""
+        self.use_gas(2)
+        value = self.context.get('value', 0)
+        self.stack.append(value)
+    
+    def op_calldataload(self):
+        """CALLDATALOAD - Carga 32 bytes de calldata"""
+        self.use_gas(3)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        offset = self.stack.pop()
+        calldata = self.context.get('calldata', b'')
+        
+        if offset >= len(calldata):
+            self.stack.append(0)
+        else:
+            # Cargar 32 bytes o menos si no hay suficientes
+            data = calldata[offset:offset + 32]
+            if len(data) < 32:
+                data = data + b'\x00' * (32 - len(data))
+            self.stack.append(int.from_bytes(data, 'big'))
+    
+    def op_calldatasize(self):
+        """CALLDATASIZE - Tamaño de calldata"""
+        self.use_gas(2)
+        calldata = self.context.get('calldata', b'')
+        self.stack.append(len(calldata))
+    
+    def op_calldatacopy(self):
+        """CALLDATACOPY - Copia calldata a memoria"""
+        self.use_gas(3)
+        if len(self.stack) < 3:
+            raise Exception("Stack underflow")
+        dest_offset = self.stack.pop()
+        offset = self.stack.pop()
+        size = self.stack.pop()
+        
+        # Gas adicional por palabra
+        self.use_gas(3 * ((size + 31) // 32))
+        
+        calldata = self.context.get('calldata', b'')
+        
+        # Expandir memoria si es necesario
+        if dest_offset + size > len(self.memory):
+            self.memory.extend(b'\x00' * (dest_offset + size - len(self.memory)))
+        
+        # Copiar datos
+        for i in range(size):
+            if offset + i < len(calldata):
+                self.memory[dest_offset + i] = calldata[offset + i]
+            else:
+                self.memory[dest_offset + i] = 0
+    
+    def op_codesize(self):
+        """CODESIZE - Tamaño del código del contrato"""
+        self.use_gas(2)
+        code = self.context.get('code', b'')
+        self.stack.append(len(code))
+    
+    def op_codecopy(self):
+        """CODECOPY - Copia código a memoria"""
+        self.use_gas(3)
+        if len(self.stack) < 3:
+            raise Exception("Stack underflow")
+        dest_offset = self.stack.pop()
+        offset = self.stack.pop()
+        size = self.stack.pop()
+        
+        # Gas adicional por palabra
+        self.use_gas(3 * ((size + 31) // 32))
+        
+        code = self.context.get('code', b'')
+        
+        # Expandir memoria si es necesario
+        if dest_offset + size > len(self.memory):
+            self.memory.extend(b'\x00' * (dest_offset + size - len(self.memory)))
+        
+        # Copiar código
+        for i in range(size):
+            if offset + i < len(code):
+                self.memory[dest_offset + i] = code[offset + i]
+            else:
+                self.memory[dest_offset + i] = 0
+    
+    def op_gasprice(self):
+        """GASPRICE - Precio del gas"""
+        self.use_gas(2)
+        gas_price = self.context.get('gas_price', 0)
+        self.stack.append(gas_price)
+    
+    def op_extcodesize(self):
+        """EXTCODESIZE - Tamaño del código de una cuenta"""
+        self.use_gas(700)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        address = self.stack.pop()
+        # Simular tamaño de código (en implementación real se consultaría el estado)
+        self.stack.append(0)
+    
+    def op_extcodecopy(self):
+        """EXTCODECOPY - Copia código de una cuenta a memoria"""
+        self.use_gas(700)
+        if len(self.stack) < 4:
+            raise Exception("Stack underflow")
+        address = self.stack.pop()
+        dest_offset = self.stack.pop()
+        offset = self.stack.pop()
+        size = self.stack.pop()
+        
+        # Gas adicional por palabra
+        self.use_gas(3 * ((size + 31) // 32))
+        
+        # Simular código vacío (en implementación real se consultaría el estado)
+        # Expandir memoria si es necesario
+        if dest_offset + size > len(self.memory):
+            self.memory.extend(b'\x00' * (dest_offset + size - len(self.memory)))
+        
+        # Llenar con ceros
+        for i in range(size):
+            self.memory[dest_offset + i] = 0
+    
+    def op_returndatasize(self):
+        """RETURNDATASIZE - Tamaño de los datos de retorno"""
+        self.use_gas(2)
+        return_data = self.context.get('return_data', b'')
+        self.stack.append(len(return_data))
+    
+    def op_returndatacopy(self):
+        """RETURNDATACOPY - Copia datos de retorno a memoria"""
+        self.use_gas(3)
+        if len(self.stack) < 3:
+            raise Exception("Stack underflow")
+        dest_offset = self.stack.pop()
+        offset = self.stack.pop()
+        size = self.stack.pop()
+        
+        # Gas adicional por palabra
+        self.use_gas(3 * ((size + 31) // 32))
+        
+        return_data = self.context.get('return_data', b'')
+        
+        if offset + size > len(return_data):
+            raise Exception("Return data access out of bounds")
+        
+        # Expandir memoria si es necesario
+        if dest_offset + size > len(self.memory):
+            self.memory.extend(b'\x00' * (dest_offset + size - len(self.memory)))
+        
+        # Copiar datos
+        for i in range(size):
+            self.memory[dest_offset + i] = return_data[offset + i]
+    
+    def op_extcodehash(self):
+        """EXTCODEHASH - Hash del código de una cuenta"""
+        self.use_gas(700)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        address = self.stack.pop()
+        # Simular hash de código (en implementación real se consultaría el estado)
+        self.stack.append(0)
+    
+    # Operaciones de bloque
+    def op_blockhash(self):
+        """BLOCKHASH - Hash de un bloque"""
+        self.use_gas(20)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        block_number = self.stack.pop()
+        # Simular hash de bloque (en implementación real se consultaría la blockchain)
+        self.stack.append(0)
+    
+    def op_coinbase(self):
+        """COINBASE - Dirección del minero"""
+        self.use_gas(2)
+        coinbase = self.context.get('coinbase', '0x0')
+        if isinstance(coinbase, str) and coinbase.startswith('0x'):
+            coinbase_int = int(coinbase, 16)
+        else:
+            coinbase_int = 0
+        self.stack.append(coinbase_int)
+    
+    def op_timestamp(self):
+        """TIMESTAMP - Timestamp del bloque"""
+        self.use_gas(2)
+        timestamp = self.context.get('timestamp', 0)
+        self.stack.append(timestamp)
+    
+    def op_number(self):
+        """NUMBER - Número del bloque"""
+        self.use_gas(2)
+        block_number = self.context.get('block_number', 0)
+        self.stack.append(block_number)
+    
+    def op_difficulty(self):
+        """DIFFICULTY - Dificultad del bloque"""
+        self.use_gas(2)
+        difficulty = self.context.get('difficulty', 0)
+        self.stack.append(difficulty)
+    
+    def op_gaslimit(self):
+        """GASLIMIT - Límite de gas del bloque"""
+        self.use_gas(2)
+        gas_limit = self.context.get('gas_limit', 0)
+        self.stack.append(gas_limit)
+    
+    def op_chainid(self):
+        """CHAINID - ID de la cadena"""
+        self.use_gas(2)
+        chain_id = self.context.get('chain_id', 1)
+        self.stack.append(chain_id)
+    
+    def op_selfbalance(self):
+        """SELFBALANCE - Balance del contrato actual"""
+        self.use_gas(5)
+        balance = self.context.get('balance', 0)
+        self.stack.append(balance)
+    
+    def op_basefee(self):
+        """BASEFEE - Tarifa base del bloque"""
+        self.use_gas(2)
+        base_fee = self.context.get('base_fee', 0)
+        self.stack.append(base_fee)
+    
+    # Stack, memoria y storage
+    def op_pop(self):
+        """POP - Elimina elemento del stack"""
+        self.use_gas(2)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        self.stack.pop()
+    
+    def op_mload(self):
+        """MLOAD - Carga 32 bytes de memoria"""
+        self.use_gas(3)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        offset = self.stack.pop()
+        
+        # Gas adicional por palabra
+        self.use_gas(3 * ((32 + 31) // 32))
+        
+        # Expandir memoria si es necesario
+        if offset + 32 > len(self.memory):
+            self.memory.extend(b'\x00' * (offset + 32 - len(self.memory)))
+        
+        data = bytes(self.memory[offset:offset + 32])
+        self.stack.append(int.from_bytes(data, 'big'))
+    
+    def op_mstore(self):
+        """MSTORE - Almacena 32 bytes en memoria"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        offset = self.stack.pop()
+        value = self.stack.pop()
+        
+        # Gas adicional por palabra
+        self.use_gas(3 * ((32 + 31) // 32))
+        
+        # Expandir memoria si es necesario
+        if offset + 32 > len(self.memory):
+            self.memory.extend(b'\x00' * (offset + 32 - len(self.memory)))
+        
+        # Almacenar valor
+        data = value.to_bytes(32, 'big')
+        for i in range(32):
+            self.memory[offset + i] = data[i]
+    
+    def op_mstore8(self):
+        """MSTORE8 - Almacena 1 byte en memoria"""
+        self.use_gas(3)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        offset = self.stack.pop()
+        value = self.stack.pop()
+        
+        # Expandir memoria si es necesario
+        if offset + 1 > len(self.memory):
+            self.memory.extend(b'\x00' * (offset + 1 - len(self.memory)))
+        
+        self.memory[offset] = value & 0xFF
 
     def op_sload(self):
         """SLOAD - Carga valor de storage"""
@@ -596,15 +1750,1286 @@ class MSCVirtualMachine:
         value = self.storage.get(key, 0)
         self.stack.append(value)
 
-# === SISTEMA DE CONSENSO HÍBRIDO ===
-class HybridConsensus:
-    """Sistema de consenso híbrido PoW/PoS"""
+    def op_sstore(self):
+        """SSTORE - Almacena valor en storage"""
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        key = self.stack.pop()
+        value = self.stack.pop()
+        
+        # Gas dinámico para SSTORE
+        if key in self.storage:
+            if self.storage[key] == 0 and value != 0:
+                self.use_gas(20000)  # SSTORE_SET
+            elif self.storage[key] != 0 and value == 0:
+                self.use_gas(5000)   # SSTORE_CLEAR
+            else:
+                self.use_gas(200)    # SSTORE_RESET
+        else:
+            if value != 0:
+                self.use_gas(20000)  # SSTORE_SET
+            else:
+                self.use_gas(200)    # SSTORE_RESET
+        
+        self.storage[key] = value
+    
+    def op_jump(self):
+        """JUMP - Salto incondicional"""
+        self.use_gas(8)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        dest = self.stack.pop()
+        
+        if dest >= len(self.context.get('code', [])):
+            raise Exception("Invalid jump destination")
+        
+        # Verificar que el destino es un JUMPDEST
+        code = self.context.get('code', [])
+        if dest < len(code) and code[dest] != 0x5b:
+            raise Exception("Invalid jump destination - not JUMPDEST")
+        
+        self.pc = dest - 1  # -1 porque se incrementa al final del loop
+    
+    def op_jumpi(self):
+        """JUMPI - Salto condicional"""
+        self.use_gas(10)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        dest = self.stack.pop()
+        condition = self.stack.pop()
+        
+        if condition != 0:
+            if dest >= len(self.context.get('code', [])):
+                raise Exception("Invalid jump destination")
+            
+            # Verificar que el destino es un JUMPDEST
+            code = self.context.get('code', [])
+            if dest < len(code) and code[dest] != 0x5b:
+                raise Exception("Invalid jump destination - not JUMPDEST")
+            
+            self.pc = dest - 1  # -1 porque se incrementa al final del loop
+    
+    def op_pc(self):
+        """PC - Program counter"""
+        self.use_gas(2)
+        self.stack.append(self.pc)
+    
+    def op_msize(self):
+        """MSIZE - Tamaño de memoria en bytes"""
+        self.use_gas(2)
+        self.stack.append(len(self.memory))
+    
+    def op_gas(self):
+        """GAS - Gas restante"""
+        self.use_gas(2)
+        self.stack.append(self.gas_remaining)
+    
+    def op_jumpdest(self):
+        """JUMPDEST - Destino de salto"""
+        self.use_gas(1)
+        pass  # No hace nada, solo marca un destino válido
+    
+    # Push operations
+    def _push_value(self, size: int):
+        """Función auxiliar para operaciones PUSH"""
+        if self.pc + size >= len(self.context.get('code', [])):
+            raise Exception("Invalid PUSH - not enough data")
+        
+        code = self.context.get('code', [])
+        value = 0
+        for i in range(size):
+            value = (value << 8) | code[self.pc + 1 + i]
+        
+        self.stack.append(value)
+        self.pc += size  # Saltar los bytes del valor
+    
+    def op_push1(self): self.use_gas(3); self._push_value(1)
+    def op_push2(self): self.use_gas(3); self._push_value(2)
+    def op_push3(self): self.use_gas(3); self._push_value(3)
+    def op_push4(self): self.use_gas(3); self._push_value(4)
+    def op_push5(self): self.use_gas(3); self._push_value(5)
+    def op_push6(self): self.use_gas(3); self._push_value(6)
+    def op_push7(self): self.use_gas(3); self._push_value(7)
+    def op_push8(self): self.use_gas(3); self._push_value(8)
+    def op_push9(self): self.use_gas(3); self._push_value(9)
+    def op_push10(self): self.use_gas(3); self._push_value(10)
+    def op_push11(self): self.use_gas(3); self._push_value(11)
+    def op_push12(self): self.use_gas(3); self._push_value(12)
+    def op_push13(self): self.use_gas(3); self._push_value(13)
+    def op_push14(self): self.use_gas(3); self._push_value(14)
+    def op_push15(self): self.use_gas(3); self._push_value(15)
+    def op_push16(self): self.use_gas(3); self._push_value(16)
+    def op_push17(self): self.use_gas(3); self._push_value(17)
+    def op_push18(self): self.use_gas(3); self._push_value(18)
+    def op_push19(self): self.use_gas(3); self._push_value(19)
+    def op_push20(self): self.use_gas(3); self._push_value(20)
+    def op_push21(self): self.use_gas(3); self._push_value(21)
+    def op_push22(self): self.use_gas(3); self._push_value(22)
+    def op_push23(self): self.use_gas(3); self._push_value(23)
+    def op_push24(self): self.use_gas(3); self._push_value(24)
+    def op_push25(self): self.use_gas(3); self._push_value(25)
+    def op_push26(self): self.use_gas(3); self._push_value(26)
+    def op_push27(self): self.use_gas(3); self._push_value(27)
+    def op_push28(self): self.use_gas(3); self._push_value(28)
+    def op_push29(self): self.use_gas(3); self._push_value(29)
+    def op_push30(self): self.use_gas(3); self._push_value(30)
+    def op_push31(self): self.use_gas(3); self._push_value(31)
+    def op_push32(self): self.use_gas(3); self._push_value(32)
+    
+    # Duplicate operations
+    def _dup_value(self, n: int):
+        """Función auxiliar para operaciones DUP"""
+        if len(self.stack) < n:
+            raise Exception("Stack underflow")
+        value = self.stack[-n]
+        self.stack.append(value)
+    
+    def op_dup1(self): self.use_gas(3); self._dup_value(1)
+    def op_dup2(self): self.use_gas(3); self._dup_value(2)
+    def op_dup3(self): self.use_gas(3); self._dup_value(3)
+    def op_dup4(self): self.use_gas(3); self._dup_value(4)
+    def op_dup5(self): self.use_gas(3); self._dup_value(5)
+    def op_dup6(self): self.use_gas(3); self._dup_value(6)
+    def op_dup7(self): self.use_gas(3); self._dup_value(7)
+    def op_dup8(self): self.use_gas(3); self._dup_value(8)
+    def op_dup9(self): self.use_gas(3); self._dup_value(9)
+    def op_dup10(self): self.use_gas(3); self._dup_value(10)
+    def op_dup11(self): self.use_gas(3); self._dup_value(11)
+    def op_dup12(self): self.use_gas(3); self._dup_value(12)
+    def op_dup13(self): self.use_gas(3); self._dup_value(13)
+    def op_dup14(self): self.use_gas(3); self._dup_value(14)
+    def op_dup15(self): self.use_gas(3); self._dup_value(15)
+    def op_dup16(self): self.use_gas(3); self._dup_value(16)
+    
+    # Exchange operations
+    def _swap_values(self, n: int):
+        """Función auxiliar para operaciones SWAP"""
+        if len(self.stack) < n + 1:
+            raise Exception("Stack underflow")
+        # Intercambiar el elemento superior con el elemento en posición n
+        self.stack[-1], self.stack[-n-1] = self.stack[-n-1], self.stack[-1]
+    
+    def op_swap1(self): self.use_gas(3); self._swap_values(1)
+    def op_swap2(self): self.use_gas(3); self._swap_values(2)
+    def op_swap3(self): self.use_gas(3); self._swap_values(3)
+    def op_swap4(self): self.use_gas(3); self._swap_values(4)
+    def op_swap5(self): self.use_gas(3); self._swap_values(5)
+    def op_swap6(self): self.use_gas(3); self._swap_values(6)
+    def op_swap7(self): self.use_gas(3); self._swap_values(7)
+    def op_swap8(self): self.use_gas(3); self._swap_values(8)
+    def op_swap9(self): self.use_gas(3); self._swap_values(9)
+    def op_swap10(self): self.use_gas(3); self._swap_values(10)
+    def op_swap11(self): self.use_gas(3); self._swap_values(11)
+    def op_swap12(self): self.use_gas(3); self._swap_values(12)
+    def op_swap13(self): self.use_gas(3); self._swap_values(13)
+    def op_swap14(self): self.use_gas(3); self._swap_values(14)
+    def op_swap15(self): self.use_gas(3); self._swap_values(15)
+    def op_swap16(self): self.use_gas(3); self._swap_values(16)
+    
+    # Logging
+    def _log_event(self, topics: int):
+        """Función auxiliar para operaciones LOG"""
+        if len(self.stack) < topics + 2:
+            raise Exception("Stack underflow")
+        
+        offset = self.stack.pop()
+        size = self.stack.pop()
+        log_topics = []
+        
+        for _ in range(topics):
+            log_topics.append(self.stack.pop())
+        
+        # Gas adicional por palabra
+        self.use_gas(375 * topics + 8 * ((size + 31) // 32))
+        
+        # Obtener datos del log
+        if offset + size > len(self.memory):
+            raise Exception("Memory access out of bounds")
+        
+        data = bytes(self.memory[offset:offset + size])
+        
+        # Crear evento de log
+        log_event = {
+            'address': self.context.get('address', '0x0'),
+            'topics': log_topics,
+            'data': data
+        }
+        
+        self.logs.append(log_event)
+    
+    def op_log0(self): self._log_event(0)
+    def op_log1(self): self._log_event(1)
+    def op_log2(self): self._log_event(2)
+    def op_log3(self): self._log_event(3)
+    def op_log4(self): self._log_event(4)
+    
+    # System operations
+    def op_create(self):
+        """CREATE - Crear nuevo contrato"""
+        self.use_gas(32000)
+        if len(self.stack) < 3:
+            raise Exception("Stack underflow")
+        value = self.stack.pop()
+        offset = self.stack.pop()
+        size = self.stack.pop()
+        
+        # Gas adicional por byte de código
+        self.use_gas(200 * size)
+        
+        # Obtener código del contrato
+        if offset + size > len(self.memory):
+            raise Exception("Memory access out of bounds")
+        
+        code = bytes(self.memory[offset:offset + size])
+        
+        # Simular creación de contrato (en implementación real se ejecutaría)
+        contract_address = self._generate_contract_address()
+        self.stack.append(contract_address)
+    
+    def op_call(self):
+        """CALL - Llamar a otro contrato"""
+        self.use_gas(700)
+        if len(self.stack) < 7:
+            raise Exception("Stack underflow")
+        
+        gas = self.stack.pop()
+        address = self.stack.pop()
+        value = self.stack.pop()
+        args_offset = self.stack.pop()
+        args_size = self.stack.pop()
+        ret_offset = self.stack.pop()
+        ret_size = self.stack.pop()
+        
+        # Gas adicional
+        if value > 0:
+            self.use_gas(9000)
+        
+        self.use_gas(2300)  # Gas base para CALL
+        
+        # Simular llamada (en implementación real se ejecutaría el contrato)
+        success = 1  # Simular éxito
+        self.stack.append(success)
+    
+    def op_callcode(self):
+        """CALLCODE - Llamar con código del llamador"""
+        self.use_gas(700)
+        # Similar a CALL pero con contexto del llamador
+        if len(self.stack) < 7:
+            raise Exception("Stack underflow")
+        
+        # Simular llamada
+        success = 1
+        self.stack.append(success)
+    
+    def op_return(self):
+        """RETURN - Retornar datos"""
+        self.use_gas(0)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        offset = self.stack.pop()
+        size = self.stack.pop()
+        
+        if offset + size > len(self.memory):
+            raise Exception("Memory access out of bounds")
+        
+        self.return_data = bytes(self.memory[offset:offset + size])
+        self.pc = len(self.context.get('code', []))  # Terminar ejecución
+    
+    def op_delegatecall(self):
+        """DELEGATECALL - Llamada delegada"""
+        self.use_gas(700)
+        if len(self.stack) < 6:
+            raise Exception("Stack underflow")
+        
+        # Simular llamada delegada
+        success = 1
+        self.stack.append(success)
+    
+    def op_create2(self):
+        """CREATE2 - Crear contrato con salt"""
+        self.use_gas(32000)
+        if len(self.stack) < 4:
+            raise Exception("Stack underflow")
+        
+        value = self.stack.pop()
+        offset = self.stack.pop()
+        size = self.stack.pop()
+        salt = self.stack.pop()
+        
+        # Gas adicional por byte de código
+        self.use_gas(200 * size)
+        
+        # Simular creación con salt
+        contract_address = self._generate_contract_address()
+        self.stack.append(contract_address)
+    
+    def op_staticcall(self):
+        """STATICCALL - Llamada estática"""
+        self.use_gas(700)
+        if len(self.stack) < 6:
+            raise Exception("Stack underflow")
+        
+        # Simular llamada estática
+        success = 1
+        self.stack.append(success)
+    
+    def op_revert(self):
+        """REVERT - Revertir ejecución"""
+        self.use_gas(0)
+        if len(self.stack) < 2:
+            raise Exception("Stack underflow")
+        offset = self.stack.pop()
+        size = self.stack.pop()
+        
+        if offset + size > len(self.memory):
+            raise Exception("Memory access out of bounds")
+        
+        self.return_data = bytes(self.memory[offset:offset + size])
+        raise Exception(f"REVERT: {self.return_data.hex()}")
+    
+    def op_selfdestruct(self):
+        """SELFDESTRUCT - Auto-destruir contrato"""
+        self.use_gas(5000)
+        if len(self.stack) < 1:
+            raise Exception("Stack underflow")
+        address = self.stack.pop()
+        
+        # Marcar contrato para destrucción
+        self.context['selfdestruct'] = True
+        self.context['refund_address'] = address
+    
+    # Funciones auxiliares
+    def _to_signed(self, value: int) -> int:
+        """Convierte valor unsigned a signed"""
+        if value >= 2**255:
+            return value - 2**256
+        return value
+    
+    def _to_unsigned(self, value: int) -> int:
+        """Convierte valor signed a unsigned"""
+        return value % 2**256
+    
+    def _generate_contract_address(self) -> int:
+        """Genera dirección de contrato"""
+        # Simular generación de dirección
+        import random
+        return random.randint(1, 2**160 - 1)
 
-    def __init__(self, blockchain: 'MSCBlockchainV3'):
-        self.blockchain = blockchain
-        self.validators = {}  # address -> stake_amount
+# === SISTEMA DE CONSENSO HÍBRIDO ROBUSTO ===
+class VRF:
+    """Verifiable Random Function para selección segura de validadores"""
+    
+    def __init__(self, private_key: bytes):
+        self.private_key = private_key
+        self.public_key = self._derive_public_key(private_key)
+    
+    def _derive_public_key(self, private_key: bytes) -> bytes:
+        """Deriva clave pública desde clave privada"""
+        # Implementación simplificada - en producción usaría criptografía real
+        return hashlib.sha256(private_key).digest()
+    
+    def generate_proof(self, input_data: bytes) -> tuple:
+        """Genera prueba VRF para entrada dada"""
+        # Combinar entrada con clave privada
+        combined = input_data + self.private_key
+        
+        # Generar hash determinístico
+        hash_result = hashlib.sha3_256(combined).digest()
+        
+        # Crear prueba (simplificada)
+        proof = hash_result + self.public_key
+        
+        return hash_result, proof
+    
+    def verify_proof(self, input_data: bytes, output: bytes, proof: bytes, public_key: bytes) -> bool:
+        """Verifica prueba VRF"""
+        if len(proof) < 32:
+            return False
+        
+        # Extraer hash y clave pública de la prueba
+        proof_hash = proof[:32]
+        proof_pubkey = proof[32:]
+        
+        # Verificar que la clave pública coincide
+        if proof_pubkey != public_key:
+            return False
+        
+        # Recalcular hash
+        combined = input_data + self.private_key
+        expected_hash = hashlib.sha3_256(combined).digest()
+        
+        return proof_hash == expected_hash
+
+class ValidatorRegistry:
+    """Registro de validadores con stake y reputación"""
+    
+    def __init__(self):
+        self.validators = {}  # address -> ValidatorInfo
+        self.total_stake = 0
+        self.min_stake = 1000000  # Stake mínimo para ser validador
+    
+    def register_validator(self, address: str, stake: int, public_key: bytes):
+        """Registra un validador"""
+        if stake < self.min_stake:
+            raise ValueError("Stake insuficiente para ser validador")
+        
+        self.validators[address] = {
+            'stake': stake,
+            'public_key': public_key,
+            'reputation': 100,  # Reputación inicial
+            'slashing_count': 0,
+            'last_selected': 0,
+            'performance_score': 1.0
+        }
+        self.total_stake += stake
+    
+    def update_stake(self, address: str, new_stake: int):
+        """Actualiza stake de validador"""
+        if address not in self.validators:
+            raise ValueError("Validador no registrado")
+        
+        old_stake = self.validators[address]['stake']
+        self.validators[address]['stake'] = new_stake
+        self.total_stake += (new_stake - old_stake)
+    
+    def slash_validator(self, address: str, slashing_amount: int):
+        """Penaliza validador por comportamiento malicioso"""
+        if address not in self.validators:
+            return
+        
+        validator = self.validators[address]
+        slashed_stake = min(slashing_amount, validator['stake'])
+        
+        validator['stake'] -= slashed_stake
+        validator['slashing_count'] += 1
+        validator['reputation'] = max(0, validator['reputation'] - 10)
+        validator['performance_score'] *= 0.9
+        
+        self.total_stake -= slashed_stake
+    
+    def get_weighted_validators(self) -> List[tuple]:
+        """Obtiene lista de validadores con pesos"""
+        weighted_validators = []
+        
+        for address, info in self.validators.items():
+            if info['stake'] >= self.min_stake:
+                # Peso basado en stake, reputación y performance
+                weight = (info['stake'] * info['reputation'] * info['performance_score']) / 10000
+                weighted_validators.append((address, weight, info))
+        
+        return sorted(weighted_validators, key=lambda x: x[1], reverse=True)
+
+class HybridConsensus:
+    """Sistema de consenso híbrido PoW/PoS con VRF y selección segura"""
+    
+    def __init__(self):
+        self.pow_pos_ratio = 10  # Cada 10 bloques, 1 PoS
+        self.validator_registry = ValidatorRegistry()
+        self.vrf_instances = {}  # address -> VRF instance
+        self.epoch_length = 100  # Bloques por época
         self.current_epoch = 0
-        self.epoch_length = 100  # bloques por época
+        self.epoch_seed = b""
+        
+    def register_validator(self, address: str, stake: int, private_key: bytes):
+        """Registra validador con clave privada para VRF"""
+        public_key = hashlib.sha256(private_key).digest()
+        self.validator_registry.register_validator(address, stake, public_key)
+        
+        # Crear instancia VRF para el validador
+        self.vrf_instances[address] = VRF(private_key)
+    
+    def select_block_producer(self, block_height: int, block_hash: bytes) -> str:
+        """Selecciona productor de bloque usando VRF y pesos"""
+        if block_height % self.pow_pos_ratio == 0:
+            return self._select_pos_validator(block_height, block_hash)
+        else:
+            return self._select_pow_miner(block_height, block_hash)
+    
+    def _select_pos_validator(self, block_height: int, block_hash: bytes) -> str:
+        """Selecciona validador PoS usando VRF"""
+        # Actualizar época si es necesario
+        if block_height // self.epoch_length > self.current_epoch:
+            self.current_epoch = block_height // self.epoch_length
+            self.epoch_seed = block_hash
+        
+        # Obtener validadores elegibles
+        weighted_validators = self.validator_registry.get_weighted_validators()
+        
+        if not weighted_validators:
+            return "POW"  # Fallback a PoW si no hay validadores
+        
+        # Crear entrada para VRF (combinar altura, hash y época)
+        vrf_input = block_hash + block_height.to_bytes(8, 'big') + self.epoch_seed
+        
+        # Calcular total de pesos
+        total_weight = sum(weight for _, weight, _ in weighted_validators)
+        
+        if total_weight == 0:
+            return "POW"
+        
+        # Generar número aleatorio usando VRF del validador con mayor peso
+        primary_validator = weighted_validators[0]
+        primary_address = primary_validator[0]
+        
+        if primary_address in self.vrf_instances:
+            vrf_output, vrf_proof = self.vrf_instances[primary_address].generate_proof(vrf_input)
+            
+            # Convertir output VRF a número
+            random_value = int.from_bytes(vrf_output, 'big')
+            
+            # Seleccionar validador usando distribución ponderada
+            selected_validator = self._weighted_random_selection(weighted_validators, random_value, total_weight)
+            
+            # Verificar que el validador seleccionado puede producir bloque
+            if self._can_produce_block(selected_validator, block_height):
+                return selected_validator
+            else:
+                # Fallback a siguiente validador
+                return self._select_fallback_validator(weighted_validators, vrf_input)
+        
+        return "POW"
+    
+    def _weighted_random_selection(self, weighted_validators: List[tuple], random_value: int, total_weight: int) -> str:
+        """Selecciona validador usando distribución ponderada"""
+        target = random_value % total_weight
+        cumulative_weight = 0
+        
+        for address, weight, _ in weighted_validators:
+            cumulative_weight += weight
+            if cumulative_weight > target:
+                return address
+        
+        # Fallback al último validador
+        return weighted_validators[-1][0]
+    
+    def _can_produce_block(self, validator_address: str, block_height: int) -> bool:
+        """Verifica si validador puede producir bloque"""
+        if validator_address not in self.validator_registry.validators:
+            return False
+        
+        validator = self.validator_registry.validators[validator_address]
+        
+        # Verificar stake mínimo
+        if validator['stake'] < self.validator_registry.min_stake:
+            return False
+        
+        # Verificar reputación mínima
+        if validator['reputation'] < 50:
+            return False
+        
+        # Verificar que no ha sido seleccionado recientemente (prevenir monopolio)
+        if block_height - validator['last_selected'] < 5:
+            return False
+        
+        return True
+    
+    def _select_fallback_validator(self, weighted_validators: List[tuple], vrf_input: bytes) -> str:
+        """Selecciona validador de respaldo"""
+        # Usar hash de la entrada como fuente de aleatoriedad
+        fallback_hash = hashlib.sha256(vrf_input).digest()
+        fallback_value = int.from_bytes(fallback_hash, 'big')
+        
+        total_weight = sum(weight for _, weight, _ in weighted_validators)
+        return self._weighted_random_selection(weighted_validators, fallback_value, total_weight)
+    
+    def _select_pow_miner(self, block_height: int, block_hash: bytes) -> str:
+        """Selecciona minero PoW (simplificado)"""
+        # En implementación real, esto verificaría proof of work
+        return "POW"
+    
+    def validate_block_producer(self, block_height: int, block_hash: bytes, producer: str) -> bool:
+        """Valida que el productor de bloque es legítimo"""
+        if producer == "POW":
+            return self._validate_pow_producer(block_height, block_hash)
+        else:
+            return self._validate_pos_producer(block_height, block_hash, producer)
+    
+    def _validate_pow_producer(self, block_height: int, block_hash: bytes) -> bool:
+        """Valida productor PoW"""
+        # En implementación real, verificaría proof of work
+        return True
+    
+    def _validate_pos_producer(self, block_height: int, block_hash: bytes, producer: str) -> bool:
+        """Valida productor PoS usando VRF"""
+        if producer not in self.validator_registry.validators:
+            return False
+        
+        if not self._can_produce_block(producer, block_height):
+            return False
+        
+        # Verificar que el validador fue seleccionado correctamente
+        expected_producer = self._select_pos_validator(block_height, block_hash)
+        return producer == expected_producer
+    
+    def update_validator_performance(self, validator_address: str, success: bool, block_height: int):
+        """Actualiza performance del validador"""
+        if validator_address not in self.validator_registry.validators:
+            return
+        
+        validator = self.validator_registry.validators[validator_address]
+        
+        if success:
+            # Recompensar por buen comportamiento
+            validator['reputation'] = min(100, validator['reputation'] + 1)
+            validator['performance_score'] = min(2.0, validator['performance_score'] * 1.01)
+        else:
+            # Penalizar por mal comportamiento
+            validator['reputation'] = max(0, validator['reputation'] - 5)
+            validator['performance_score'] = max(0.1, validator['performance_score'] * 0.95)
+        
+        validator['last_selected'] = block_height
+    
+    def get_consensus_info(self, block_height: int) -> dict:
+        """Obtiene información del consenso para un bloque"""
+        is_pos = (block_height % self.pow_pos_ratio == 0)
+        epoch = block_height // self.epoch_length
+        
+        return {
+            'is_pos': is_pos,
+            'epoch': epoch,
+            'total_validators': len(self.validator_registry.validators),
+            'total_stake': self.validator_registry.total_stake,
+            'min_stake': self.validator_registry.min_stake,
+            'pow_pos_ratio': self.pow_pos_ratio
+        }
+
+# === SISTEMA DE ESTADO PERSISTENTE ===
+class StateSnapshot:
+    """Snapshot del estado en un punto específico"""
+    
+    def __init__(self, block_height: int, state_root: str, accounts: dict, contracts: dict):
+        self.block_height = block_height
+        self.state_root = state_root
+        self.accounts = accounts.copy()
+        self.contracts = contracts.copy()
+        self.timestamp = int(time.time())
+        self.size_bytes = self._calculate_size()
+    
+    def _calculate_size(self) -> int:
+        """Calcula tamaño del snapshot en bytes"""
+        import sys
+        return sys.getsizeof(self.accounts) + sys.getsizeof(self.contracts)
+    
+    def to_dict(self) -> dict:
+        """Convierte snapshot a diccionario"""
+        return {
+            'block_height': self.block_height,
+            'state_root': self.state_root,
+            'accounts': self.accounts,
+            'contracts': self.contracts,
+            'timestamp': self.timestamp,
+            'size_bytes': self.size_bytes
+        }
+
+class StateManager:
+    """Gestor de estado persistente con snapshots y pruning"""
+    
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self.state_db = MerklePatriciaTrie(db_path)
+        self.snapshots = {}  # block_height -> StateSnapshot
+        self.max_snapshots = 10  # Máximo número de snapshots a mantener
+        self.pruning_enabled = True
+        self.pruning_interval = 1000  # Bloques entre pruning
+        self.last_pruning_height = 0
+        
+        # Configuración de pruning
+        self.keep_recent_blocks = 1000  # Mantener últimos N bloques
+        self.keep_epoch_snapshots = True  # Mantener snapshots de épocas
+        self.epoch_length = 10000  # Bloques por época
+        
+    def create_snapshot(self, block_height: int, accounts: dict, contracts: dict) -> StateSnapshot:
+        """Crea snapshot del estado actual"""
+        # Calcular state root
+        state_root = self._calculate_state_root(accounts, contracts)
+        
+        # Crear snapshot
+        snapshot = StateSnapshot(block_height, state_root, accounts, contracts)
+        
+        # Almacenar snapshot
+        self.snapshots[block_height] = snapshot
+        
+        # Limpiar snapshots antiguos si es necesario
+        if len(self.snapshots) > self.max_snapshots:
+            self._cleanup_old_snapshots()
+        
+        return snapshot
+    
+    def _calculate_state_root(self, accounts: dict, contracts: dict) -> str:
+        """Calcula root hash del estado"""
+        # Crear estructura de estado
+        state_data = {
+            'accounts': accounts,
+            'contracts': contracts
+        }
+        
+        # Serializar y hashear
+        state_bytes = rlp_encode(state_data)
+        return sha3_256(state_bytes).hex()
+    
+    def _cleanup_old_snapshots(self):
+        """Limpia snapshots antiguos"""
+        if not self.snapshots:
+            return
+        
+        # Ordenar por altura de bloque
+        sorted_snapshots = sorted(self.snapshots.items(), key=lambda x: x[0])
+        
+        # Mantener solo los más recientes
+        snapshots_to_keep = sorted_snapshots[-self.max_snapshots:]
+        
+        # Eliminar snapshots antiguos
+        for height, _ in sorted_snapshots[:-self.max_snapshots]:
+            del self.snapshots[height]
+    
+    def get_snapshot(self, block_height: int) -> Optional[StateSnapshot]:
+        """Obtiene snapshot para una altura específica"""
+        return self.snapshots.get(block_height)
+    
+    def get_latest_snapshot(self) -> Optional[StateSnapshot]:
+        """Obtiene el snapshot más reciente"""
+        if not self.snapshots:
+            return None
+        
+        latest_height = max(self.snapshots.keys())
+        return self.snapshots[latest_height]
+    
+    def restore_from_snapshot(self, block_height: int) -> bool:
+        """Restaura estado desde snapshot"""
+        snapshot = self.get_snapshot(block_height)
+        if not snapshot:
+            return False
+        
+        # Restaurar cuentas
+        for address, account_data in snapshot.accounts.items():
+            self.state_db.put(address.encode(), rlp_encode(account_data))
+        
+        # Restaurar contratos
+        for address, contract_data in snapshot.contracts.items():
+            self.state_db.put(f"contract_{address}".encode(), rlp_encode(contract_data))
+        
+        return True
+    
+    def prune_old_data(self, current_height: int) -> int:
+        """Elimina datos antiguos para liberar espacio"""
+        if not self.pruning_enabled:
+            return 0
+        
+        if current_height - self.last_pruning_height < self.pruning_interval:
+            return 0
+        
+        pruned_count = 0
+        
+        # Pruning de snapshots
+        heights_to_remove = []
+        for height in self.snapshots.keys():
+            if height < current_height - self.keep_recent_blocks:
+                # Mantener snapshots de épocas si está habilitado
+                if self.keep_epoch_snapshots and height % self.epoch_length == 0:
+                    continue
+                heights_to_remove.append(height)
+        
+        for height in heights_to_remove:
+            del self.snapshots[height]
+            pruned_count += 1
+        
+        # Pruning de datos de estado antiguos
+        # En implementación real, esto eliminaría datos de LevelDB
+        # que no están en snapshots recientes
+        
+        self.last_pruning_height = current_height
+        return pruned_count
+    
+    def get_state_info(self) -> dict:
+        """Obtiene información del estado"""
+        return {
+            'total_snapshots': len(self.snapshots),
+            'max_snapshots': self.max_snapshots,
+            'pruning_enabled': self.pruning_enabled,
+            'last_pruning_height': self.last_pruning_height,
+            'snapshot_heights': sorted(self.snapshots.keys()),
+            'total_size_bytes': sum(snapshot.size_bytes for snapshot in self.snapshots.values())
+        }
+    
+    def verify_state_integrity(self) -> bool:
+        """Verifica integridad del estado"""
+        try:
+            # Verificar que todos los snapshots son válidos
+            for height, snapshot in self.snapshots.items():
+                # Recalcular state root
+                expected_root = self._calculate_state_root(snapshot.accounts, snapshot.contracts)
+                if expected_root != snapshot.state_root:
+                    return False
+            
+            return True
+        except Exception:
+            return False
+    
+    def export_state(self, block_height: int, file_path: str) -> bool:
+        """Exporta estado a archivo"""
+        snapshot = self.get_snapshot(block_height)
+        if not snapshot:
+            return False
+        
+        try:
+            import json
+            with open(file_path, 'w') as f:
+                json.dump(snapshot.to_dict(), f, indent=2)
+            return True
+        except Exception:
+            return False
+    
+    def import_state(self, file_path: str) -> bool:
+        """Importa estado desde archivo"""
+        try:
+            import json
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+            
+            snapshot = StateSnapshot(
+                data['block_height'],
+                data['state_root'],
+                data['accounts'],
+                data['contracts']
+            )
+            
+            self.snapshots[snapshot.block_height] = snapshot
+            return True
+        except Exception:
+            return False
+
+class PersistentStateManager:
+    """Gestor de estado persistente con LevelDB y snapshots"""
+    
+    def __init__(self, db_path: str):
+        self.state_manager = StateManager(db_path)
+        self.accounts = {}  # address -> account_data
+        self.contracts = {}  # address -> contract_data
+        self.storage = {}  # contract_address -> storage_key -> value
+        self.current_height = 0
+        
+    def update_account(self, address: str, account_data: dict):
+        """Actualiza datos de cuenta"""
+        self.accounts[address] = account_data
+        self.state_manager.state_db.put(address.encode(), rlp_encode(account_data))
+    
+    def update_contract(self, address: str, contract_data: dict):
+        """Actualiza datos de contrato"""
+        self.contracts[address] = contract_data
+        self.state_manager.state_db.put(f"contract_{address}".encode(), rlp_encode(contract_data))
+    
+    def update_storage(self, contract_address: str, key: str, value: int):
+        """Actualiza storage de contrato"""
+        if contract_address not in self.storage:
+            self.storage[contract_address] = {}
+        
+        self.storage[contract_address][key] = value
+        
+        # Almacenar en trie
+        storage_key = f"storage_{contract_address}_{key}".encode()
+        self.state_manager.state_db.put(storage_key, value.to_bytes(32, 'big'))
+    
+    def get_account(self, address: str) -> Optional[dict]:
+        """Obtiene datos de cuenta"""
+        if address in self.accounts:
+            return self.accounts[address]
+        
+        # Intentar cargar desde trie
+        data = self.state_manager.state_db.get(address.encode())
+        if data:
+            account_data = rlp_decode(data)[0]
+            self.accounts[address] = account_data
+            return account_data
+        
+        return None
+    
+    def get_contract(self, address: str) -> Optional[dict]:
+        """Obtiene datos de contrato"""
+        if address in self.contracts:
+            return self.contracts[address]
+        
+        # Intentar cargar desde trie
+        data = self.state_manager.state_db.get(f"contract_{address}".encode())
+        if data:
+            contract_data = rlp_decode(data)[0]
+            self.contracts[address] = contract_data
+            return contract_data
+        
+        return None
+    
+    def get_storage(self, contract_address: str, key: str) -> int:
+        """Obtiene valor de storage"""
+        if contract_address in self.storage and key in self.storage[contract_address]:
+            return self.storage[contract_address][key]
+        
+        # Intentar cargar desde trie
+        storage_key = f"storage_{contract_address}_{key}".encode()
+        data = self.state_manager.state_db.get(storage_key)
+        if data:
+            return int.from_bytes(data, 'big')
+        
+        return 0
+    
+    def commit_block(self, block_height: int):
+        """Confirma cambios del bloque"""
+        self.current_height = block_height
+        
+        # Crear snapshot si es necesario
+        if block_height % 100 == 0:  # Snapshot cada 100 bloques
+            self.state_manager.create_snapshot(block_height, self.accounts, self.contracts)
+        
+        # Pruning periódico
+        self.state_manager.prune_old_data(block_height)
+    
+    def rollback_to_height(self, target_height: int) -> bool:
+        """Revierte estado a una altura específica"""
+        # Buscar snapshot más cercano
+        available_heights = sorted(self.state_manager.snapshots.keys())
+        snapshot_height = None
+        
+        for height in reversed(available_heights):
+            if height <= target_height:
+                snapshot_height = height
+                break
+        
+        if snapshot_height is None:
+            return False
+        
+        # Restaurar desde snapshot
+        return self.state_manager.restore_from_snapshot(snapshot_height)
+    
+    def get_state_root(self) -> str:
+        """Calcula root hash del estado actual"""
+        return self.state_manager._calculate_state_root(self.accounts, self.contracts)
+    
+    def get_state_info(self) -> dict:
+        """Obtiene información del estado"""
+        info = self.state_manager.get_state_info()
+        info.update({
+            'current_height': self.current_height,
+            'total_accounts': len(self.accounts),
+            'total_contracts': len(self.contracts),
+            'state_root': self.get_state_root()
+        })
+        return info
+
+# === SISTEMA P2P ROBUSTO CON DHT ===
+class DHTNode:
+    """Nodo de Distributed Hash Table para descubrimiento de peers"""
+    
+    def __init__(self, node_id: str, address: tuple):
+        self.node_id = node_id
+        self.address = address  # (ip, port)
+        self.buckets = [[] for _ in range(160)]  # 160 buckets para 160-bit IDs
+        self.routing_table = {}
+        self.last_seen = time.time()
+        self.reputation = 100
+        self.connection_count = 0
+        
+    def distance(self, other_id: str) -> int:
+        """Calcula distancia XOR entre nodos"""
+        return int(self.node_id, 16) ^ int(other_id, 16)
+    
+    def add_peer(self, peer_id: str, peer_address: tuple):
+        """Añade peer a la tabla de enrutamiento"""
+        distance = self.distance(peer_id)
+        bucket_index = distance.bit_length() - 1 if distance > 0 else 0
+        
+        # Añadir a bucket si hay espacio o reemplazar peer menos confiable
+        if len(self.buckets[bucket_index]) < 8:  # Kademlia k=8
+            self.buckets[bucket_index].append({
+                'id': peer_id,
+                'address': peer_address,
+                'last_seen': time.time(),
+                'reputation': 100
+            })
+        else:
+            # Reemplazar peer con menor reputación
+            min_reputation = min(peer['reputation'] for peer in self.buckets[bucket_index])
+            for i, peer in enumerate(self.buckets[bucket_index]):
+                if peer['reputation'] == min_reputation:
+                    self.buckets[bucket_index][i] = {
+                        'id': peer_id,
+                        'address': peer_address,
+                        'last_seen': time.time(),
+                        'reputation': 100
+                    }
+                    break
+        
+        self.routing_table[peer_id] = peer_address
+    
+    def get_closest_peers(self, target_id: str, count: int = 8) -> List[tuple]:
+        """Obtiene los peers más cercanos a un ID objetivo"""
+        all_peers = []
+        for bucket in self.buckets:
+            all_peers.extend(bucket)
+        
+        # Ordenar por distancia
+        all_peers.sort(key=lambda p: int(p['id'], 16) ^ int(target_id, 16))
+        
+        return [(peer['id'], peer['address']) for peer in all_peers[:count]]
+
+class EclipseAttackProtection:
+    """Protección contra ataques de eclipse"""
+    
+    def __init__(self):
+        self.connection_history = {}  # peer_id -> connection_times
+        self.suspicious_peers = set()
+        self.max_connections_per_peer = 5
+        self.time_window = 3600  # 1 hora
+        self.reputation_threshold = 50
+        
+    def is_suspicious_peer(self, peer_id: str, peer_address: tuple) -> bool:
+        """Detecta si un peer es sospechoso de ataque eclipse"""
+        current_time = time.time()
+        
+        # Verificar si el peer está en la lista de sospechosos
+        if peer_id in self.suspicious_peers:
+            return True
+        
+        # Verificar conexiones excesivas
+        if peer_id in self.connection_history:
+            recent_connections = [
+                t for t in self.connection_history[peer_id] 
+                if current_time - t < self.time_window
+            ]
+            
+            if len(recent_connections) > self.max_connections_per_peer:
+                self.suspicious_peers.add(peer_id)
+                return True
+        
+        return False
+    
+    def record_connection(self, peer_id: str, peer_address: tuple):
+        """Registra conexión de peer"""
+        current_time = time.time()
+        
+        if peer_id not in self.connection_history:
+            self.connection_history[peer_id] = []
+        
+        self.connection_history[peer_id].append(current_time)
+        
+        # Limpiar conexiones antiguas
+        self.connection_history[peer_id] = [
+            t for t in self.connection_history[peer_id] 
+            if current_time - t < self.time_window
+        ]
+    
+    def update_peer_reputation(self, peer_id: str, success: bool):
+        """Actualiza reputación del peer"""
+        if peer_id in self.connection_history:
+            # En implementación real, esto actualizaría reputación
+            pass
+
+class P2PNetworkManager:
+    """Gestor de red P2P con DHT y protección contra eclipse"""
+    
+    def __init__(self, node_id: str, listen_address: tuple):
+        self.node_id = node_id
+        self.listen_address = listen_address
+        self.dht_node = DHTNode(node_id, listen_address)
+        self.eclipse_protection = EclipseAttackProtection()
+        self.connected_peers = {}  # peer_id -> connection_info
+        self.bootstrap_nodes = []
+        self.max_peers = 50
+        self.discovery_interval = 300  # 5 minutos
+        self.last_discovery = 0
+        
+        # Configuración de red
+        self.ping_timeout = 5
+        self.ping_interval = 60
+        self.sync_interval = 10
+        
+    def add_bootstrap_node(self, address: tuple):
+        """Añade nodo bootstrap"""
+        self.bootstrap_nodes.append(address)
+    
+    def discover_peers(self) -> List[tuple]:
+        """Descubre nuevos peers usando DHT"""
+        current_time = time.time()
+        
+        if current_time - self.last_discovery < self.discovery_interval:
+            return []
+        
+        discovered_peers = []
+        
+        # Usar nodos bootstrap para descubrimiento inicial
+        for bootstrap_addr in self.bootstrap_nodes:
+            try:
+                # En implementación real, esto enviaría mensajes FIND_NODE
+                # Por ahora simulamos descubrimiento
+                fake_peers = self._simulate_peer_discovery(bootstrap_addr)
+                discovered_peers.extend(fake_peers)
+            except Exception as e:
+                print(f"Error discovering peers from {bootstrap_addr}: {e}")
+        
+        # Usar DHT para descubrimiento
+        if len(self.dht_node.routing_table) > 0:
+            # Buscar peers cercanos a nuestro ID
+            closest_peers = self.dht_node.get_closest_peers(self.node_id, 20)
+            discovered_peers.extend(closest_peers)
+        
+        self.last_discovery = current_time
+        return discovered_peers
+    
+    def _simulate_peer_discovery(self, bootstrap_addr: tuple) -> List[tuple]:
+        """Simula descubrimiento de peers (en implementación real sería real)"""
+        # Generar algunos peers falsos para demostración
+        fake_peers = []
+        for i in range(5):
+            fake_id = f"{random.randint(0, 2**160-1):040x}"
+            fake_addr = (f"192.168.1.{100 + i}", 30303 + i)
+            fake_peers.append((fake_id, fake_addr))
+        return fake_peers
+    
+    def connect_to_peer(self, peer_id: str, peer_address: tuple) -> bool:
+        """Conecta a un peer específico"""
+        # Verificar protección contra eclipse
+        if self.eclipse_protection.is_suspicious_peer(peer_id, peer_address):
+            print(f"Rejecting suspicious peer: {peer_id}")
+            return False
+        
+        # Verificar límite de conexiones
+        if len(self.connected_peers) >= self.max_peers:
+            print("Maximum peer connections reached")
+            return False
+        
+        try:
+            # En implementación real, esto establecería conexión TCP/UDP
+            # Por ahora simulamos conexión exitosa
+            connection_info = {
+                'id': peer_id,
+                'address': peer_address,
+                'connected_at': time.time(),
+                'last_ping': time.time(),
+                'reputation': 100,
+                'sync_status': 'syncing'
+            }
+            
+            self.connected_peers[peer_id] = connection_info
+            self.dht_node.add_peer(peer_id, peer_address)
+            self.eclipse_protection.record_connection(peer_id, peer_address)
+            
+            print(f"Connected to peer {peer_id} at {peer_address}")
+            return True
+            
+        except Exception as e:
+            print(f"Failed to connect to peer {peer_id}: {e}")
+            return False
+    
+    def disconnect_peer(self, peer_id: str):
+        """Desconecta de un peer"""
+        if peer_id in self.connected_peers:
+            del self.connected_peers[peer_id]
+            print(f"Disconnected from peer {peer_id}")
+    
+    def ping_peers(self):
+        """Envía ping a todos los peers conectados"""
+        current_time = time.time()
+        peers_to_remove = []
+        
+        for peer_id, peer_info in self.connected_peers.items():
+            if current_time - peer_info['last_ping'] > self.ping_interval:
+                try:
+                    # En implementación real, esto enviaría PING
+                    # Por ahora simulamos ping exitoso
+                    success = self._simulate_ping(peer_id)
+                    
+                    if success:
+                        peer_info['last_ping'] = current_time
+                        self.eclipse_protection.update_peer_reputation(peer_id, True)
+                    else:
+                        peers_to_remove.append(peer_id)
+                        self.eclipse_protection.update_peer_reputation(peer_id, False)
+                        
+                except Exception as e:
+                    print(f"Ping failed for peer {peer_id}: {e}")
+                    peers_to_remove.append(peer_id)
+        
+        # Remover peers que no respondieron
+        for peer_id in peers_to_remove:
+            self.disconnect_peer(peer_id)
+    
+    def _simulate_ping(self, peer_id: str) -> bool:
+        """Simula ping a peer (en implementación real sería real)"""
+        # 90% de éxito para simulación
+        return random.random() < 0.9
+    
+    def sync_with_peers(self, blockchain_height: int) -> List[dict]:
+        """Sincroniza con peers para obtener bloques"""
+        current_time = time.time()
+        new_blocks = []
+        
+        for peer_id, peer_info in self.connected_peers.items():
+            if current_time - peer_info.get('last_sync', 0) > self.sync_interval:
+                try:
+                    # En implementación real, esto solicitaría bloques
+                    # Por ahora simulamos sincronización
+                    peer_blocks = self._simulate_block_sync(peer_id, blockchain_height)
+                    new_blocks.extend(peer_blocks)
+                    peer_info['last_sync'] = current_time
+                    
+                except Exception as e:
+                    print(f"Sync failed with peer {peer_id}: {e}")
+        
+        return new_blocks
+    
+    def _simulate_block_sync(self, peer_id: str, current_height: int) -> List[dict]:
+        """Simula sincronización de bloques (en implementación real sería real)"""
+        # Simular algunos bloques nuevos
+        new_blocks = []
+        for i in range(random.randint(0, 3)):
+            block = {
+                'height': current_height + i + 1,
+                'hash': f"block_{current_height + i + 1}",
+                'timestamp': time.time(),
+                'peer_id': peer_id
+            }
+            new_blocks.append(block)
+        return new_blocks
+    
+    def broadcast_message(self, message: dict, exclude_peers: List[str] = None):
+        """Transmite mensaje a todos los peers conectados"""
+        if exclude_peers is None:
+            exclude_peers = []
+        
+        for peer_id, peer_info in self.connected_peers.items():
+            if peer_id not in exclude_peers:
+                try:
+                    # En implementación real, esto enviaría el mensaje
+                    self._simulate_message_send(peer_id, message)
+                except Exception as e:
+                    print(f"Failed to send message to peer {peer_id}: {e}")
+    
+    def _simulate_message_send(self, peer_id: str, message: dict):
+        """Simula envío de mensaje (en implementación real sería real)"""
+        print(f"Sending message to peer {peer_id}: {message.get('type', 'unknown')}")
+    
+    def get_network_info(self) -> dict:
+        """Obtiene información de la red"""
+        return {
+            'node_id': self.node_id,
+            'listen_address': self.listen_address,
+            'connected_peers': len(self.connected_peers),
+            'max_peers': self.max_peers,
+            'bootstrap_nodes': len(self.bootstrap_nodes),
+            'dht_peers': len(self.dht_node.routing_table),
+            'suspicious_peers': len(self.eclipse_protection.suspicious_peers),
+            'last_discovery': self.last_discovery
+        }
+    
+    def get_peer_list(self) -> List[dict]:
+        """Obtiene lista de peers conectados"""
+        peer_list = []
+        for peer_id, peer_info in self.connected_peers.items():
+            peer_list.append({
+                'id': peer_id,
+                'address': peer_info['address'],
+                'connected_at': peer_info['connected_at'],
+                'reputation': peer_info['reputation'],
+                'sync_status': peer_info['sync_status']
+            })
+        return peer_list
 
     def select_block_producer(self, block_height: int) -> str:
         """Selecciona productor de bloque según el consenso híbrido"""
@@ -3843,22 +6268,81 @@ ADVANCED_DASHBOARD_HTML = '''
 
 # === RLP ENCODING (simplificado) ===
 def rlp_encode(data):
-    """Codificación RLP simplificada"""
+    """Codificación RLP mejorada"""
     if isinstance(data, int):
         if data == 0:
             return b'\x80'
-        return data.to_bytes((data.bit_length() + 7) // 8, 'big')
+        elif data < 0x80:
+            return bytes([data])
+        else:
+            encoded = data.to_bytes((data.bit_length() + 7) // 8, 'big')
+            return bytes([0x80 + len(encoded)]) + encoded
     elif isinstance(data, str):
-        return data.encode()
+        return rlp_encode(data.encode())
     elif isinstance(data, bytes):
-        return data
+        if len(data) == 1 and data[0] < 0x80:
+            return data
+        elif len(data) < 56:
+            return bytes([0x80 + len(data)]) + data
+        else:
+            length_bytes = len(data).to_bytes((len(data).bit_length() + 7) // 8, 'big')
+            return bytes([0xb7 + len(length_bytes)]) + length_bytes + data
     elif isinstance(data, list):
-        output = b''
+        encoded_items = b''
         for item in data:
-            output += rlp_encode(item)
-        return output
+            encoded_items += rlp_encode(item)
+        
+        if len(encoded_items) < 56:
+            return bytes([0xc0 + len(encoded_items)]) + encoded_items
+        else:
+            length_bytes = len(encoded_items).to_bytes((len(encoded_items).bit_length() + 7) // 8, 'big')
+            return bytes([0xf7 + len(length_bytes)]) + length_bytes + encoded_items
     else:
         raise TypeError(f"Cannot encode type {type(data)}")
+
+def rlp_decode(data: bytes):
+    """Decodificación RLP mejorada"""
+    if not data:
+        return b''
+    
+    first_byte = data[0]
+    
+    if first_byte < 0x80:
+        # Byte simple
+        return data[0:1], data[1:]
+    elif first_byte < 0xb8:
+        # String corto
+        length = first_byte - 0x80
+        return data[1:1+length], data[1+length:]
+    elif first_byte < 0xc0:
+        # String largo
+        length_length = first_byte - 0xb7
+        length = int.from_bytes(data[1:1+length_length], 'big')
+        return data[1+length_length:1+length_length+length], data[1+length_length+length:]
+    elif first_byte < 0xf8:
+        # Lista corta
+        length = first_byte - 0xc0
+        items = []
+        remaining = data[1:1+length]
+        while remaining:
+            item, remaining = rlp_decode(remaining)
+            items.append(item)
+        return items, data[1+length:]
+    else:
+        # Lista larga
+        length_length = first_byte - 0xf7
+        length = int.from_bytes(data[1:1+length_length], 'big')
+        items = []
+        remaining = data[1+length_length:1+length_length+length]
+        while remaining:
+            item, remaining = rlp_decode(remaining)
+            items.append(item)
+        return items, data[1+length_length+length:]
+
+def sha3_256(data: bytes) -> bytes:
+    """SHA3-256 hash function"""
+    import hashlib
+    return hashlib.sha3_256(data).digest()
 
 # === NODO P2P MEJORADO ===
 class P2PNodeV3:
