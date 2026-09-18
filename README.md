@@ -18,7 +18,7 @@
 
 </div>
 
-> **Estado verificado (2026-09-18):** el camino modular (`msc_network_main.py`) tiene correcciones P0/P1 verificadas con `p0_regression_tests.py` y `p1_regression_tests.py`. El listener P2P TCP JSON-lines ya inicia, acepta handshakes y responde `ping/pong`; la VM incluye aritmética signed/bitwise, calldata, retorno de datos, entorno de bloque, logs y canales cifrados. Sigue siendo un prototipo porque `mscnet_blockchain.py` es un monolito legado separado, la VM no ofrece compatibilidad EVM completa y la red todavía requiere autenticación criptográfica y sincronización completa para producción. Consulta el [changelog](CHANGELOG.md).
+> **Estado verificado (2026-09-18):** el camino modular (`msc_network_main.py`) tiene correcciones P0/P1 verificadas con `p0_regression_tests.py` y `p1_regression_tests.py`. El listener P2P TCP JSON-lines ya inicia, acepta handshakes y responde `ping/pong`; la VM incluye aritmética signed/bitwise, calldata, memoria, almacenamiento persistente y transitorio, `MCOPY`, `EXTCODEHASH`, `CREATE2`, `DELEGATECALL`, `STATICCALL`, retorno de datos, entorno de bloque, logs y canales cifrados. Sigue siendo un prototipo porque `mscnet_blockchain.py` es un monolito legado separado, la VM no ofrece compatibilidad EVM completa y la red todavía requiere autenticación criptográfica y sincronización completa para producción. Consulta el [changelog](CHANGELOG.md).
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -120,7 +120,7 @@ La economía del protocolo está sustentada por el token nativo **$SYNTH**, que 
 
 * **MSC Ledger (MSC Blockchain v3.0):** El núcleo de nuestra infraestructura, una blockchain de grado empresarial.
     * [cite_start]**Consenso Híbrido Avanzado (PoW/PoS):** Combina la seguridad del Proof of Work (PoW) con la eficiencia y descentralización del Proof of Stake (PoS), alternando la producción de bloques para optimizar el rendimiento y la resistencia a ataques[cite: 1]. [cite_start]La dificultad se ajusta dinámicamente para mantener un tiempo de bloque objetivo de 15 segundos[cite: 1].
-    * **Máquina Virtual MSC (VM):** Una máquina virtual personalizada con un subconjunto explícito de opcodes, incluyendo aritmética signed/bitwise, calldata, memoria, almacenamiento, retorno, logs y comunicación interna cifrada; no es una EVM completa.
+    * **Máquina Virtual MSC (VM):** Una máquina virtual personalizada con un subconjunto explícito de opcodes, incluyendo aritmética signed/bitwise, calldata, memoria, almacenamiento persistente/transitorio, `MCOPY`, hashes de código, creación determinista, llamadas externas con handlers explícitos y comunicación interna cifrada; no es una EVM completa. `0xf2` permanece reservado a la extensión MSC `SECURE_CALL`.
     * **Gestión de Estado Verificable:** Utiliza un almacén persistente autenticado con codificación RLP canónica.
     * [cite_start]**Arquitectura de Transacciones EIP-1559:** Soporte completo para transacciones con un modelo de tarifas basado en EIP-1559, incluyendo `base_fee_per_gas` y `max_priority_fee_per_gas` para una previsibilidad de costes mejorada[cite: 1].
 * **Grafo de Síntesis (G'):** La representación fundamental del conocimiento colectivo y las soluciones emergentes dentro del estado de la blockchain, modelado como una red dinámica.

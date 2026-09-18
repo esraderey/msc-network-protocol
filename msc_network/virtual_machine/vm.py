@@ -102,6 +102,9 @@ class MSCVirtualMachine:
         self.return_data = b""
         self.logs = []
         self.context = {}
+        self.transient_storage = {}
+        self._jumpdest_code = None
+        self._valid_jump_destinations = set()
         
         # Protección contra re-entrancy
         self.call_depth = 0
@@ -157,6 +160,7 @@ class MSCVirtualMachine:
             0x3c: self.op_extcodecopy,
             0x3d: self.op_returndatasize,
             0x3e: self.op_returndatacopy,
+            0x3f: self.op_extcodehash,
             0x40: self.op_blockhash,
             0x41: self.op_coinbase,
             0x42: self.op_timestamp,
@@ -166,6 +170,8 @@ class MSCVirtualMachine:
             0x46: self.op_chainid,
             0x47: self.op_selfbalance,
             0x48: self.op_basefee,
+            0x49: self.op_blobhash,
+            0x4a: self.op_blobbasefee,
             0x50: self.op_pop,
             0x51: self.op_mload,
             0x52: self.op_mstore,
@@ -178,6 +184,9 @@ class MSCVirtualMachine:
             0x59: self.op_msize,
             0x5a: self.op_gas,
             0x5b: self.op_jumpdest,
+            0x5c: self.op_tload,
+            0x5d: self.op_tstore,
+            0x5e: self.op_mcopy,
             0xa0: lambda: self.op_log(0),
             0xa1: lambda: self.op_log(1),
             0xa2: lambda: self.op_log(2),
@@ -185,8 +194,13 @@ class MSCVirtualMachine:
             0xa4: lambda: self.op_log(4),
             0xf0: self.op_create,
             0xf1: self.op_call,
+            # F2 is reserved for MSC's authenticated encrypted internal call.
+            # Mapping CALLCODE to the same byte would make bytecode ambiguous.
             0xf2: self.op_secure_call,
             0xf3: self.op_return,
+            0xf4: self.op_delegatecall,
+            0xf5: self.op_create2,
+            0xfa: self.op_staticcall,
             0xfd: self.op_revert,
             0xfe: self.op_invalid,
             0xff: self.op_selfdestruct,
@@ -228,6 +242,7 @@ class MSCVirtualMachine:
         
         state_data_snapshot = dict(self.state_db.data)
         storage_snapshot = copy.deepcopy(self.contract_storage)
+        transient_snapshot = copy.deepcopy(self.transient_storage)
 
         # Resetear estado del VM
         self.stack = []
@@ -238,10 +253,14 @@ class MSCVirtualMachine:
         self.logs = []
         self.context = dict(context)
         self.context['code'] = code
+        self.context['static'] = bool(self.context.get('static', False))
+        self._jumpdest_code = code
+        self._valid_jump_destinations = self._scan_jump_destinations(code)
         self.storage = self.contract_storage.setdefault(contract_address, {})
+        self.transient_storage = {}
 
         try:
-            while self.pc < len(code) and self.gas_remaining > 0:
+            while self.pc < len(code):
                 opcode = code[self.pc]
 
                 if 0x5f <= opcode <= 0x7f:
@@ -279,7 +298,9 @@ class MSCVirtualMachine:
             self.state_db.data = state_data_snapshot
             self.state_db._recompute_root()
             self.contract_storage = storage_snapshot
+            self.transient_storage = transient_snapshot
             self.storage = self.contract_storage.setdefault(contract_address, {})
+            self.logs = []
             result = {
                 'success': False,
                 'reverted': True,
@@ -292,7 +313,9 @@ class MSCVirtualMachine:
             self.state_db.data = state_data_snapshot
             self.state_db._recompute_root()
             self.contract_storage = storage_snapshot
+            self.transient_storage = transient_snapshot
             self.storage = self.contract_storage.setdefault(contract_address, {})
+            self.logs = []
             result = {
                 'success': False,
                 'reverted': False,
@@ -379,9 +402,76 @@ class MSCVirtualMachine:
 
     def use_gas(self, amount: int):
         """Consume gas"""
+        if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+            raise Exception("Invalid gas amount")
         if self.gas_remaining < amount:
             raise Exception("Out of gas")
         self.gas_remaining -= amount
+
+    def _require_mutable(self):
+        if self.context.get("static", False):
+            raise Exception("State-changing opcode in static call")
+
+    def _rollback_external_state(self, state_snapshot, storage_snapshot,
+                                 transient_snapshot):
+        self.state_db.data = state_snapshot
+        self.state_db._recompute_root()
+        self.contract_storage = storage_snapshot
+        self.transient_storage = transient_snapshot
+        address = self.context.get("address", "unknown")
+        self.storage = self.contract_storage.setdefault(address, {})
+
+    def _invoke_external_handler(self, handler, address: int, value: int,
+                                 payload: bytes, gas: int, mode: str):
+        """Invoke a trusted external-call adapter with a bounded gas budget.
+
+        Handlers are deliberately explicit: the VM never fabricates a call
+        result. A false result rolls back state changes made by the adapter,
+        matching a failed call frame while allowing the caller to continue.
+        """
+        if not callable(handler):
+            raise Exception(f"{mode.upper()} requires an explicit call handler")
+        if not isinstance(gas, int) or isinstance(gas, bool) or gas < 0:
+            raise Exception("Invalid external call gas")
+        if gas > self.gas_remaining:
+            raise Exception("External call gas exceeds remaining gas")
+
+        state_snapshot = dict(self.state_db.data)
+        storage_snapshot = copy.deepcopy(self.contract_storage)
+        transient_snapshot = copy.deepcopy(self.transient_storage)
+        previous_mode = self.context.get("external_call_mode")
+        previous_static = self.context.get("static", False)
+        self.context["external_call_mode"] = mode
+        if mode == "staticcall":
+            self.context["static"] = True
+        try:
+            result = handler(address, value, payload, gas)
+        except Exception:
+            self._rollback_external_state(
+                state_snapshot, storage_snapshot, transient_snapshot
+            )
+            raise
+        finally:
+            if previous_mode is None:
+                self.context.pop("external_call_mode", None)
+            else:
+                self.context["external_call_mode"] = previous_mode
+            self.context["static"] = previous_static
+
+        if isinstance(result, tuple) and len(result) == 2:
+            success, returned = result
+        else:
+            success, returned = result, b""
+        if not isinstance(success, bool) or not isinstance(returned, bytes):
+            self._rollback_external_state(
+                state_snapshot, storage_snapshot, transient_snapshot
+            )
+            raise Exception("Invalid call handler result")
+        if mode == "staticcall" or not success:
+            self._rollback_external_state(
+                state_snapshot, storage_snapshot, transient_snapshot
+            )
+        return success, returned
 
     def check_reentrancy_guard(self, contract_address: str) -> bool:
         """Verifica si un contrato está siendo ejecutado (re-entrancy guard)"""
@@ -456,7 +546,7 @@ class MSCVirtualMachine:
             raise Exception("Stack underflow")
         b = self.stack.pop()
         a = self.stack.pop()
-        self.stack.append((a + b) % (2**256))
+        self._push(a + b)
         self.use_gas(3)
 
     def op_mul(self):
@@ -465,7 +555,7 @@ class MSCVirtualMachine:
             raise Exception("Stack underflow")
         b = self.stack.pop()
         a = self.stack.pop()
-        self.stack.append((a * b) % (2**256))
+        self._push(a * b)
         self.use_gas(5)
 
     def op_mod(self):
@@ -527,7 +617,7 @@ class MSCVirtualMachine:
             raise Exception("Stack underflow")
         b = self.stack.pop()
         a = self.stack.pop()
-        self.stack.append((a - b) % (2**256))
+        self._push(a - b)
         self.use_gas(3)
 
     def op_div(self):
@@ -537,9 +627,9 @@ class MSCVirtualMachine:
         b = self.stack.pop()
         a = self.stack.pop()
         if b == 0:
-            self.stack.append(0)
+            self._push(0)
         else:
-            self.stack.append(a // b)
+            self._push(a // b)
         self.use_gas(5)
 
     def op_sdiv(self):
@@ -560,7 +650,7 @@ class MSCVirtualMachine:
             raise Exception("Stack underflow")
         b = self.stack.pop()
         a = self.stack.pop()
-        self.stack.append(1 if a < b else 0)
+        self._push(1 if a < b else 0)
         self.use_gas(3)
 
     def op_gt(self):
@@ -569,7 +659,7 @@ class MSCVirtualMachine:
             raise Exception("Stack underflow")
         b = self.stack.pop()
         a = self.stack.pop()
-        self.stack.append(1 if a > b else 0)
+        self._push(1 if a > b else 0)
         self.use_gas(3)
 
     def op_slt(self):
@@ -590,7 +680,7 @@ class MSCVirtualMachine:
             raise Exception("Stack underflow")
         b = self.stack.pop()
         a = self.stack.pop()
-        self.stack.append(1 if a == b else 0)
+        self._push(1 if a == b else 0)
         self.use_gas(3)
 
     def op_iszero(self):
@@ -598,7 +688,7 @@ class MSCVirtualMachine:
         if len(self.stack) < 1:
             raise Exception("Stack underflow")
         a = self.stack.pop()
-        self.stack.append(1 if a == 0 else 0)
+        self._push(1 if a == 0 else 0)
         self.use_gas(3)
 
     def op_and(self):
@@ -607,7 +697,7 @@ class MSCVirtualMachine:
             raise Exception("Stack underflow")
         b = self.stack.pop()
         a = self.stack.pop()
-        self.stack.append(a & b)
+        self._push(a & b)
         self.use_gas(3)
 
     def op_or(self):
@@ -616,7 +706,7 @@ class MSCVirtualMachine:
             raise Exception("Stack underflow")
         b = self.stack.pop()
         a = self.stack.pop()
-        self.stack.append(a | b)
+        self._push(a | b)
         self.use_gas(3)
 
     def op_xor(self):
@@ -670,13 +760,13 @@ class MSCVirtualMachine:
         data = bytes(self.memory[offset:offset + size])
         import hashlib
         hash_result = int.from_bytes(sha3_256(data), 'big')
-        self.stack.append(hash_result)
+        self._push(hash_result)
         self.use_gas(30 + size)
 
     def op_address(self):
         """ADDRESS - Dirección del contrato actual"""
         address = self.context.get('address', '0x0')
-        self.stack.append(int(address, 16) if address.startswith('0x') else 0)
+        self._push(int(address, 16) if address.startswith('0x') else 0)
         self.use_gas(2)
 
     def op_balance(self):
@@ -692,25 +782,25 @@ class MSCVirtualMachine:
                 balance = int(json.loads(encoded.decode()).get("balance", 0))
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 raise Exception("Invalid account state") from exc
-        self.stack.append(balance)
+        self._push(balance)
         self.use_gas(400)
 
     def op_origin(self):
         """ORIGIN - Dirección del originador de la transacción"""
         origin = self.context.get('origin', '0x0')
-        self.stack.append(int(origin, 16) if origin.startswith('0x') else 0)
+        self._push(int(origin, 16) if origin.startswith('0x') else 0)
         self.use_gas(2)
 
     def op_caller(self):
         """CALLER - Dirección del llamador"""
         caller = self.context.get('caller', '0x0')
-        self.stack.append(int(caller, 16) if caller.startswith('0x') else 0)
+        self._push(int(caller, 16) if caller.startswith('0x') else 0)
         self.use_gas(2)
 
     def op_callvalue(self):
         """CALLVALUE - Valor enviado con la llamada"""
         value = self.context.get('value', 0)
-        self.stack.append(value)
+        self._push(value)
         self.use_gas(2)
 
     def _context_bytes(self, name: str) -> bytes:
@@ -790,6 +880,13 @@ class MSCVirtualMachine:
         self._copy_bytes_to_memory(memory_offset, self._external_code(address), code_offset, size)
         self.use_gas(100 + 3 * ((size + 31) // 32))
 
+    def op_extcodehash(self):
+        """EXTCODEHASH - Hash external code, or zero for an absent account."""
+        address = self._pop()
+        code = self._external_code(address)
+        self._push(0 if not code else int.from_bytes(sha3_256(code), "big"))
+        self.use_gas(100)
+
     def op_returndatasize(self):
         self._push(len(self.return_data))
         self.use_gas(2)
@@ -857,7 +954,32 @@ class MSCVirtualMachine:
         self._push(self._context_word("base_fee"))
         self.use_gas(2)
 
+    def op_blobhash(self):
+        """BLOBHASH - Read a versioned blob hash from block context."""
+        index = self._pop()
+        blob_hashes = self.context.get("blob_hashes", {})
+        value = 0
+        if isinstance(blob_hashes, dict):
+            value = blob_hashes.get(index, 0)
+        elif isinstance(blob_hashes, (list, tuple)) and index < len(blob_hashes):
+            value = blob_hashes[index]
+        else:
+            raise Exception("Invalid blob hash context")
+        if isinstance(value, bytes):
+            if len(value) > 32:
+                raise Exception("Invalid blob hash")
+            value = int.from_bytes(value, "big")
+        if not isinstance(value, int) or value < 0:
+            raise Exception("Invalid blob hash")
+        self._push(value)
+        self.use_gas(3)
+
+    def op_blobbasefee(self):
+        self._push(self._context_word("blob_base_fee"))
+        self.use_gas(2)
+
     def op_log(self, topics_count: int):
+        self._require_mutable()
         size = self._pop()
         offset = self._pop()
         topics = [self._pop() for _ in range(topics_count)]
@@ -886,7 +1008,7 @@ class MSCVirtualMachine:
         # Cargar 32 bytes desde memoria
         data = self.memory[offset:offset + 32]
         value = int.from_bytes(data, 'big')
-        self.stack.append(value)
+        self._push(value)
         self.use_gas(3)
 
     def op_mstore(self):
@@ -920,11 +1042,12 @@ class MSCVirtualMachine:
         key = self.stack.pop()
         
         value = self.storage.get(key, 0)
-        self.stack.append(value)
+        self._push(value)
         self.use_gas(200)
 
     def op_sstore(self):
         """SSTORE - Almacena en storage"""
+        self._require_mutable()
         if len(self.stack) < 2:
             raise Exception("Stack underflow")
         value = self.stack.pop()
@@ -939,7 +1062,9 @@ class MSCVirtualMachine:
             raise Exception("Stack underflow")
         dest = self.stack.pop()
         self._validate_jump_destination(dest)
-        self.pc = dest
+        # execute() increments PC after each opcode; land on JUMPDEST so it
+        # is actually executed and charged instead of skipping it.
+        self.pc = dest - 1
         self.use_gas(8)
 
     def op_jumpi(self):
@@ -951,17 +1076,17 @@ class MSCVirtualMachine:
         
         if condition != 0:
             self._validate_jump_destination(dest)
-            self.pc = dest
+            self.pc = dest - 1
         self.use_gas(10)
 
     def op_pc(self):
         """PC - Program counter"""
-        self.stack.append(self.pc)
+        self._push(self.pc)
         self.use_gas(2)
 
     def op_gas(self):
         """GAS - Gas restante"""
-        self.stack.append(self.gas_remaining)
+        self._push(self.gas_remaining)
         self.use_gas(2)
 
     def op_jumpdest(self):
@@ -969,25 +1094,49 @@ class MSCVirtualMachine:
         # No hace nada, solo marca una posición válida para saltos
         self.use_gas(1)
 
+    def op_tload(self):
+        key = self._pop()
+        self._push(self.transient_storage.get(key, 0))
+        self.use_gas(100)
+
+    def op_tstore(self):
+        self._require_mutable()
+        value = self._pop()
+        key = self._pop()
+        self.transient_storage[key] = value
+        self.use_gas(100)
+
+    def op_mcopy(self):
+        """MCOPY - Copy memory with overlap-safe semantics."""
+        destination = self._pop()
+        source = self._pop()
+        size = self._pop()
+        self._ensure_memory(source, size)
+        self._ensure_memory(destination, size)
+        copied = bytes(self.memory[source:source + size])
+        self.memory[destination:destination + size] = copied
+        self.use_gas(3 + 3 * ((size + 31) // 32))
+
     def op_create(self):
         """CREATE - Crear nuevo contrato"""
+        self._require_mutable()
         if len(self.stack) < 3:
             raise Exception("Stack underflow")
         value = self.stack.pop()
         offset = self.stack.pop()
         size = self.stack.pop()
-        
-        if offset < 0 or size < 0 or offset + size > len(self.memory):
-            raise Exception("Memory access out of bounds")
+        self._ensure_memory(offset, size)
         code = bytes(self.memory[offset:offset + size])
         caller = self.context.get('address', '0x0')
         nonce = self.context.get('nonce', 0)
+        if not isinstance(nonce, int) or isinstance(nonce, bool) or nonce < 0:
+            raise Exception("Invalid CREATE nonce")
         contract_address = "0x" + hashlib.sha256(
             f"{caller}:{nonce}:".encode() + code
         ).hexdigest()[-40:]
+        self.use_gas(32000 + 200 * len(code))
         self.state_db.put(f"contract:{contract_address}".encode(), code)
-        self.stack.append(int(contract_address, 16))
-        self.use_gas(32000)
+        self._push(int(contract_address, 16))
 
     def op_call(self):
         """CALL - Llamar a otro contrato"""
@@ -1006,23 +1155,98 @@ class MSCVirtualMachine:
         if not all(isinstance(item, int) and item >= 0 for item in
                    (args_offset, args_size, ret_offset, ret_size)):
             raise Exception("Invalid CALL memory range")
+        if self.context.get("static", False) and value != 0:
+            raise Exception("CALL with value in static call")
         self._ensure_memory(args_offset, args_size)
         self._ensure_memory(ret_offset, ret_size)
+        self.use_gas(700)
         handler = self.context.get('call_handler')
-        if not callable(handler):
-            raise Exception("CALL requires an explicit call handler")
-        result = handler(address, value,
-                         bytes(self.memory[args_offset:args_offset + args_size]), gas)
-        if isinstance(result, tuple) and len(result) == 2:
-            success, returned = result
-        else:
-            success, returned = result, b''
-        if not isinstance(success, bool) or not isinstance(returned, bytes):
-            raise Exception("Invalid call handler result")
+        success, returned = self._invoke_external_handler(
+            handler, address, value,
+            bytes(self.memory[args_offset:args_offset + args_size]), gas, "call"
+        )
         self.memory[ret_offset:ret_offset + ret_size] = returned[:ret_size].ljust(ret_size, b'\x00')
         self.return_data = returned
         self._push(1 if success else 0)
+
+    def op_delegatecall(self):
+        """DELEGATECALL - External code with the caller's storage context."""
+        if len(self.stack) < 6:
+            raise Exception("Stack underflow")
+        gas = self._pop()
+        address = self._pop()
+        args_offset = self._pop()
+        args_size = self._pop()
+        ret_offset = self._pop()
+        ret_size = self._pop()
+        if self.context.get("static", False):
+            raise Exception("DELEGATECALL in static call")
+        self._ensure_memory(args_offset, args_size)
+        self._ensure_memory(ret_offset, ret_size)
         self.use_gas(700)
+        handler = self.context.get("delegate_call_handler")
+        if handler is None:
+            handler = self.context.get("call_handler")
+        value = self._context_word("callvalue", self._context_word("value"))
+        success, returned = self._invoke_external_handler(
+            handler, address, value,
+            bytes(self.memory[args_offset:args_offset + args_size]), gas,
+            "delegatecall"
+        )
+        self.memory[ret_offset:ret_offset + ret_size] = returned[:ret_size].ljust(ret_size, b"\x00")
+        self.return_data = returned
+        self._push(1 if success else 0)
+
+    def op_create2(self):
+        """CREATE2 - Deterministic contract creation."""
+        self._require_mutable()
+        if len(self.stack) < 4:
+            raise Exception("Stack underflow")
+        salt = self._pop()
+        size = self._pop()
+        offset = self._pop()
+        _value = self._pop()
+        self._ensure_memory(offset, size)
+        code = bytes(self.memory[offset:offset + size])
+        deployer = self.context.get("address", "0x0")
+        try:
+            deployer_bytes = bytes.fromhex(deployer[2:] if deployer.startswith("0x") else deployer)
+        except (AttributeError, ValueError):
+            raise Exception("Invalid CREATE2 deployer") from None
+        if len(deployer_bytes) != 20:
+            raise Exception("Invalid CREATE2 deployer")
+        address_bytes = sha3_256(
+            b"\xff" + deployer_bytes + salt.to_bytes(32, "big") + sha3_256(code)
+        )[-20:]
+        contract_address = "0x" + address_bytes.hex()
+        self.use_gas(32000 + 200 * len(code))
+        self.state_db.put(f"contract:{contract_address}".encode(), code)
+        self._push(int.from_bytes(address_bytes, "big"))
+
+    def op_staticcall(self):
+        """STATICCALL - External call with state mutation disabled."""
+        if len(self.stack) < 6:
+            raise Exception("Stack underflow")
+        gas = self._pop()
+        address = self._pop()
+        args_offset = self._pop()
+        args_size = self._pop()
+        ret_offset = self._pop()
+        ret_size = self._pop()
+        self._ensure_memory(args_offset, args_size)
+        self._ensure_memory(ret_offset, ret_size)
+        self.use_gas(700)
+        handler = self.context.get("static_call_handler")
+        if handler is None:
+            handler = self.context.get("call_handler")
+        success, returned = self._invoke_external_handler(
+            handler, address, 0,
+            bytes(self.memory[args_offset:args_offset + args_size]), gas,
+            "staticcall"
+        )
+        self.memory[ret_offset:ret_offset + ret_size] = returned[:ret_size].ljust(ret_size, b"\x00")
+        self.return_data = returned
+        self._push(1 if success else 0)
 
     def op_secure_call(self):
         """F2: authenticated encrypted internal call over SecureInternalChannel."""
@@ -1041,6 +1265,9 @@ class MSCVirtualMachine:
         handler = self.context.get('secure_call_handler')
         if not isinstance(channel, SecureInternalChannel) or not callable(handler):
             raise Exception("SECURE_CALL requires a secure channel and handler")
+        self.use_gas(900)
+        if gas > self.gas_remaining:
+            raise Exception("External call gas exceeds remaining gas")
         sender = self.context.get('address', 'unknown')
         recipient = f"0x{address:040x}"
         envelope = channel.encrypt(
@@ -1048,12 +1275,20 @@ class MSCVirtualMachine:
             bytes(self.memory[args_offset:args_offset + args_size]),
             aad=str(value).encode()
         )
-        response = handler(envelope, gas)
-        payload = channel.decrypt(response, sender, recipient)
+        state_snapshot = dict(self.state_db.data)
+        storage_snapshot = copy.deepcopy(self.contract_storage)
+        transient_snapshot = copy.deepcopy(self.transient_storage)
+        try:
+            response = handler(envelope, gas)
+            payload = channel.decrypt(response, sender, recipient)
+        except Exception:
+            self._rollback_external_state(
+                state_snapshot, storage_snapshot, transient_snapshot
+            )
+            raise
         self.memory[ret_offset:ret_offset + ret_size] = payload[:ret_size].ljust(ret_size, b'\x00')
         self.return_data = payload
         self._push(1)
-        self.use_gas(900)
 
     def op_return(self):
         """RETURN - Retorna datos"""
@@ -1083,6 +1318,7 @@ class MSCVirtualMachine:
 
     def op_selfdestruct(self):
         """SELFDESTRUCT - Destruir contrato"""
+        self._require_mutable()
         if len(self.stack) < 1:
             raise Exception("Stack underflow")
         beneficiary = self.stack.pop()
@@ -1096,6 +1332,24 @@ class MSCVirtualMachine:
 
     def _validate_jump_destination(self, destination: int):
         code = self.context.get('code', b'')
-        if (not isinstance(destination, int) or destination < 0 or
-                destination >= len(code) or code[destination] != 0x5b):
+        if code != self._jumpdest_code:
+            self._jumpdest_code = code
+            self._valid_jump_destinations = self._scan_jump_destinations(code)
+        if (not isinstance(destination, int) or destination not in
+                self._valid_jump_destinations):
             raise Exception("Invalid jump destination")
+
+    @staticmethod
+    def _scan_jump_destinations(code: bytes):
+        destinations = set()
+        pc = 0
+        while pc < len(code):
+            opcode = code[pc]
+            if opcode == 0x5b:
+                destinations.add(pc)
+                pc += 1
+            elif 0x60 <= opcode <= 0x7f:
+                pc += 1 + (opcode - 0x5f)
+            else:
+                pc += 1
+        return destinations

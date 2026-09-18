@@ -52,6 +52,7 @@ class MSCCompiler:
             'EXTCODECOPY': 0x3c,
             'RETURNDATASIZE': 0x3d,
             'RETURNDATACOPY': 0x3e,
+            'EXTCODEHASH': 0x3f,
             'BLOCKHASH': 0x40,
             'COINBASE': 0x41,
             'TIMESTAMP': 0x42,
@@ -61,6 +62,8 @@ class MSCCompiler:
             'CHAINID': 0x46,
             'SELFBALANCE': 0x47,
             'BASEFEE': 0x48,
+            'BLOBHASH': 0x49,
+            'BLOBBASEFEE': 0x4a,
             'POP': 0x50,
             'MLOAD': 0x51,
             'MSTORE': 0x52,
@@ -73,6 +76,9 @@ class MSCCompiler:
             'MSIZE': 0x59,
             'GAS': 0x5a,
             'JUMPDEST': 0x5b,
+            'TLOAD': 0x5c,
+            'TSTORE': 0x5d,
+            'MCOPY': 0x5e,
             'LOG0': 0xa0,
             'LOG1': 0xa1,
             'LOG2': 0xa2,
@@ -82,6 +88,9 @@ class MSCCompiler:
             'CALL': 0xf1,
             'SECURE_CALL': 0xf2,
             'RETURN': 0xf3,
+            'DELEGATECALL': 0xf4,
+            'CREATE2': 0xf5,
+            'STATICCALL': 0xfa,
             'REVERT': 0xfd,
             'INVALID': 0xfe,
             'SELFDESTRUCT': 0xff,
@@ -159,14 +168,11 @@ class MSCCompiler:
         
         # Parsear argumentos
         for arg in parts[1:]:
-            if arg.startswith('0x'):
-                # Valor hexadecimal
+            if re.fullmatch(r"[-+]?0[xX][0-9a-fA-F]+", arg):
                 instruction['args'].append(int(arg, 16))
-            elif arg.isdigit():
-                # Valor decimal
+            elif re.fullmatch(r"[-+]?\d+", arg):
                 instruction['args'].append(int(arg))
             else:
-                # Etiqueta o identificador
                 instruction['args'].append(arg)
         
         return instruction
@@ -180,7 +186,11 @@ class MSCCompiler:
         pc = 0
         for instruction in instructions:
             if instruction['opcode'] == 'LABEL':
+                if len(instruction['args']) != 1 or not isinstance(instruction['args'][0], str):
+                    raise ValueError("LABEL requires exactly one identifier")
                 label_name = instruction['args'][0]
+                if label_name in labels:
+                    raise ValueError(f"Duplicate label: {label_name}")
                 labels[label_name] = pc
             else:
                 pc += self._get_instruction_size(instruction)
@@ -200,83 +210,85 @@ class MSCCompiler:
     def _get_instruction_size(self, instruction: Dict[str, Any]) -> int:
         """Calcula el tamaño de una instrucción"""
         opcode = instruction['opcode']
-        
-        if opcode in self.opcodes:
-            return 1 + sum(self._get_arg_size(arg) for arg in instruction['args'])
-        elif opcode.startswith('PUSH'):
-            # PUSH1, PUSH2, etc.
-            size = int(opcode[4:])
-            return 1 + size
-        else:
-            return 1
+        args = instruction['args']
 
-    def _get_arg_size(self, arg: Any) -> int:
-        """Calcula el tamaño de un argumento"""
-        if isinstance(arg, int):
-            if arg < 256:
+        if opcode == 'LABEL':
+            return 0
+        if opcode in self.opcodes:
+            if not args:
                 return 1
-            elif arg < 65536:
-                return 2
-            elif arg < 16777216:
-                return 3
-            else:
-                return 4
-        else:
-            return 0  # Etiquetas se resuelven después
+            if opcode not in ('JUMP', 'JUMPI') or len(args) != 1:
+                raise ValueError(f"{opcode} does not accept inline arguments")
+            return 2 + self._jump_push_size(args[0])
+        if opcode.startswith('PUSH'):
+            try:
+                size = int(opcode[4:])
+            except ValueError:
+                raise ValueError(f"Invalid PUSH opcode: {opcode}") from None
+            if size not in self.push_opcodes:
+                raise ValueError(f"Invalid PUSH size: {size}")
+            if (size == 0 and args) or (size > 0 and len(args) != 1):
+                raise ValueError(f"PUSH{size} has an invalid argument count")
+            return 1 + size
+        raise ValueError(f"Unknown opcode: {opcode}")
+
+    @staticmethod
+    def _jump_push_size(value: Any) -> int:
+        if isinstance(value, str):
+            # Labels are absolute code offsets. Two bytes cover normal
+            # contracts; compilation rejects larger offsets below.
+            return 2
+        if not isinstance(value, int) or value < 0:
+            raise ValueError("Jump target must be a non-negative integer or label")
+        return max(1, (value.bit_length() + 7) // 8)
+
+    @staticmethod
+    def _resolve_value(value: Any, labels: Dict[str, int]) -> int:
+        if isinstance(value, str):
+            if value not in labels:
+                raise ValueError(f"Unknown label: {value}")
+            return labels[value]
+        if not isinstance(value, int) or value < 0:
+            raise ValueError("Immediate must be a non-negative integer or label")
+        return value
+
+    def _encode_push(self, size: int, value: int) -> bytes:
+        max_value = (1 << (size * 8)) - 1
+        if value > max_value:
+            raise ValueError(f"Immediate {value} does not fit in PUSH{size}")
+        return bytes([self.push_opcodes[size]]) + value.to_bytes(size, 'big')
 
     def _compile_instruction(self, instruction: Dict[str, Any], labels: Dict[str, int], pc: int) -> bytes:
         """Compila una instrucción individual"""
         opcode = instruction['opcode']
         args = instruction['args']
-        
+
         if opcode in self.opcodes:
-            # Opcode simple
-            bytecode = bytearray([self.opcodes[opcode]])
-            
-            # Añadir argumentos
-            for arg in args:
-                if isinstance(arg, str) and arg in labels:
-                    # Resolver etiqueta
-                    value = labels[arg] - pc
-                    bytecode.extend(value.to_bytes(4, 'big'))
-                elif isinstance(arg, int):
-                    # Valor numérico
-                    if arg < 256:
-                        bytecode.append(arg)
-                    else:
-                        bytecode.extend(arg.to_bytes(4, 'big'))
-            
-            return bytes(bytecode)
-        
-        elif opcode.startswith('PUSH'):
-            # Instrucción PUSH
-            size = int(opcode[4:])
+            if not args:
+                return bytes([self.opcodes[opcode]])
+            if opcode not in ('JUMP', 'JUMPI') or len(args) != 1:
+                raise ValueError(f"{opcode} does not accept inline arguments")
+            value = self._resolve_value(args[0], labels)
+            size = self._jump_push_size(args[0])
+            return self._encode_push(size, value) + bytes([self.opcodes[opcode]])
+
+        if opcode.startswith('PUSH'):
+            try:
+                size = int(opcode[4:])
+            except ValueError:
+                raise ValueError(f"Invalid PUSH opcode: {opcode}") from None
             if size not in self.push_opcodes:
                 raise ValueError(f"Invalid PUSH size: {size}")
-            
             if size == 0:
                 if args:
                     raise ValueError("PUSH0 does not accept an argument")
                 return bytes([self.push_opcodes[0]])
-            if not args:
-                raise ValueError("PUSH requires an argument")
-            
-            value = args[0]
-            if isinstance(value, str) and value in labels:
-                value = labels[value] - pc
-            
-            # Asegurar que el valor cabe en el tamaño especificado
-            max_value = (1 << (size * 8)) - 1
-            if value > max_value:
-                value = value & max_value
-            
-            bytecode = bytearray([self.push_opcodes[size]])
-            bytecode.extend(value.to_bytes(size, 'big'))
-            
-            return bytes(bytecode)
-        
-        else:
-            raise ValueError(f"Unknown opcode: {opcode}")
+            if len(args) != 1:
+                raise ValueError(f"PUSH{size} requires exactly one argument")
+            value = self._resolve_value(args[0], labels)
+            return self._encode_push(size, value)
+
+        raise ValueError(f"Unknown opcode: {opcode}")
 
     def decompile(self, bytecode: bytes) -> str:
         """Descompila bytecode a código fuente"""

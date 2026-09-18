@@ -35,6 +35,7 @@ class MSCBlockchainV3:
         self.chain: List[Block] = []
         self.state_db = MerklePatriciaTrie(BlockchainConfig.STATE_DB_PATH)
         self.pending_transactions = SortedList(key=lambda tx: -tx.gas_price)
+        self._pending_transaction_hashes = set()
         self.transaction_broadcaster = None
 
         # Consensus (se importará después)
@@ -144,12 +145,18 @@ class MSCBlockchainV3:
     async def add_transaction(self, tx: Transaction, broadcast: bool = True) -> bool:
         """Añade transacción al pool"""
         try:
+            if len(self.pending_transactions) >= BlockchainConfig.TX_POOL_SIZE:
+                return False
+            tx_hash = tx.calculate_hash()
+            if tx_hash in self._pending_transaction_hashes:
+                return False
             # Validar transacción
             if not await self._validate_transaction(tx):
                 return False
 
             # Añadir al pool
             self.pending_transactions.add(tx)
+            self._pending_transaction_hashes.add(tx_hash)
             # transactions_counter.inc()  # Se importará después
 
             # Propagar solo si el transporte de red fue configurado.
@@ -191,7 +198,10 @@ class MSCBlockchainV3:
 
         # 3. Verificar nonce
         if tx.nonce != account.nonce:
-            raise ValueError(f"Invalid nonce: expected {account.nonce}, got {tx.nonce}")
+            if tx.nonce < account.nonce:
+                raise ValueError(f"Invalid nonce: expected {account.nonce}, got {tx.nonce}")
+            if tx.nonce > account.nonce + BlockchainConfig.MAX_NONCE_AHEAD:
+                raise ValueError("Nonce too far ahead")
 
         # 4. Verificar balance para gas
         gas_cost = tx.gas_limit * tx.gas_price
@@ -254,6 +264,7 @@ class MSCBlockchainV3:
             for tx in candidates:
                 try:
                     self.pending_transactions.remove(tx)
+                    self._pending_transaction_hashes.discard(tx.calculate_hash())
                 except ValueError:
                     pass
 
@@ -297,6 +308,8 @@ class MSCBlockchainV3:
         gas_used = 0
         
         for tx in self.pending_transactions:
+            if len(selected) >= BlockchainConfig.MAX_TRANSACTIONS_PER_BLOCK:
+                break
             if gas_used + tx.gas_limit > 30_000_000:
                 break
             selected.append(tx)

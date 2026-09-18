@@ -20,6 +20,7 @@ from msc_network.network.discovery import DiscoveryProtocol
 from msc_network.network.p2p_manager import P2PNetworkManager
 from msc_network.virtual_machine.vm import MSCVirtualMachine, SecureInternalChannel
 from msc_network.core.merkle_trie import MerklePatriciaTrie
+from msc_network.utils import sha3_256
 from wallet import Keystore, MultiSigWallet, TransactionData
 
 
@@ -39,6 +40,8 @@ class P1RegressionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pool.add_liquidity(Decimal("-1"), Decimal("1"))
         pool.add_liquidity(Decimal("100"), Decimal("100"))
+        amount_out = pool.swap(Decimal("1"), "MSC")
+        self.assertGreater(amount_out, Decimal("0"))
         with self.assertRaises(ValueError):
             pool.swap(Decimal("1"), "UNKNOWN")
         self.assertEqual(pair, dex.create_pair("USD", "MSC"))
@@ -232,6 +235,111 @@ class P1RegressionTests(unittest.TestCase):
                 vm.compiler.compile("PUSH1 1\nPUSH1 2\nSDIV\nSTOP"),
                 bytes.fromhex("600160020500"),
             )
+
+    def test_vm_modern_opcodes_handlers_and_limits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trie = MerklePatriciaTrie(str(Path(directory) / "state"))
+            address = "0x" + "1" * 40
+
+            def run(code, **context):
+                vm = MSCVirtualMachine(trie)
+                result = vm.execute(code, 200000, {
+                    "address": address,
+                    **context,
+                })
+                return vm, result
+
+            vm, result = run(bytes.fromhex("6001602a5d60015c00"))
+            self.assertTrue(result["success"], result)
+            self.assertEqual(vm.stack, [42])
+
+            vm, result = run(bytes.fromhex("6000602a536001600060015e00"))
+            self.assertTrue(result["success"], result)
+            self.assertEqual(bytes(vm.memory[:2]), b"**")
+
+            vm, result = run(
+                bytes.fromhex("60003f00"),
+                external_code_handler=lambda _address: b"\x60\x00",
+            )
+            self.assertTrue(result["success"], result)
+            self.assertEqual(vm.stack, [int.from_bytes(sha3_256(b"\x60\x00"), "big")])
+
+            vm, result = run(
+                bytes.fromhex("6000494a00"),
+                blob_hashes=[b"h" * 32],
+                blob_base_fee=7,
+            )
+            self.assertTrue(result["success"], result)
+            self.assertEqual(vm.stack, [int.from_bytes(b"h" * 32, "big"), 7])
+
+            def static_call_handler(_address, _value, _payload, _gas):
+                trie.put(b"static-side-effect", b"must-rollback")
+                return True, b"ok"
+
+            vm, result = run(
+                bytes.fromhex("60026000600060006007612710fa00"),
+                call_handler=static_call_handler,
+            )
+            self.assertTrue(result["success"], result)
+            self.assertEqual(vm.stack, [1])
+            self.assertEqual(bytes(vm.memory[:2]), b"ok")
+            self.assertIsNone(trie.get(b"static-side-effect"))
+
+            delegate_vm, delegate_result = run(
+                bytes.fromhex("60026000600060006007612710f400"),
+                call_handler=lambda _address, _value, _payload, _gas: (True, b"dg"),
+            )
+            self.assertTrue(delegate_result["success"], delegate_result)
+            self.assertEqual(delegate_vm.stack, [1])
+            self.assertEqual(bytes(delegate_vm.memory[:2]), b"dg")
+
+            def failed_call_handler(_address, _value, _payload, _gas):
+                trie.put(b"external-side-effect", b"must-rollback")
+                return False, b""
+
+            vm, result = run(
+                bytes.fromhex("600060006000600060006007612710f100"),
+                call_handler=failed_call_handler,
+            )
+            self.assertTrue(result["success"], result)
+            self.assertEqual(vm.stack, [0])
+            self.assertIsNone(trie.get(b"external-side-effect"))
+
+            vm = MSCVirtualMachine(trie)
+            vm.context = {"address": address, "code": b"\x00"}
+            vm.gas_remaining = 200000
+            vm.memory.extend(b"\x00")
+            vm.stack = [0, 0, 1, 1]
+            vm.op_create2()
+            created = next(key for key in trie.data if key.startswith(b"contract:"))
+            self.assertEqual(trie.get(created), b"\x00")
+
+            result = run(bytes.fromhex("63010000005f5200"))[1]
+            self.assertFalse(result["success"])
+            self.assertIn("Memory access out of bounds", result["error"])
+
+            source = "\n".join([
+                "PUSH1 1", "PUSH1 2", "EXTCODEHASH", "BLOBHASH",
+                "TLOAD", "TSTORE", "MCOPY", "DELEGATECALL",
+                "CREATE2", "STATICCALL", "STOP",
+            ])
+            bytecode = vm.compiler.compile(source)
+            decompiled = vm.compiler.decompile(bytecode)
+            for mnemonic in ("EXTCODEHASH", "BLOBHASH", "TLOAD", "TSTORE",
+                              "MCOPY", "DELEGATECALL", "CREATE2", "STATICCALL"):
+                self.assertIn(mnemonic, decompiled)
+
+            jump_code = vm.compiler.compile("\n".join([
+                "PUSH1 1", "JUMP target", "PUSH1 9",
+                "LABEL target", "JUMPDEST", "STOP",
+            ]))
+            jump_vm, jump_result = run(jump_code)
+            self.assertTrue(jump_result["success"], jump_result)
+            self.assertEqual(jump_vm.stack, [1])
+
+            _, invalid_jump_result = run(bytes.fromhex("605b60015600"))
+            self.assertFalse(invalid_jump_result["success"])
+            self.assertIn("Invalid jump destination", invalid_jump_result["error"])
 
 
 def asdict_for_test(tx_data):

@@ -74,6 +74,7 @@ class P0RegressionTests(unittest.TestCase):
             tx = Transaction(0, BlockchainConfig.MIN_GAS_PRICE, 21000, recipient, 1000)
             tx.sign(key)
             self.assertTrue(asyncio.run(chain.add_transaction(tx)))
+            self.assertFalse(asyncio.run(chain.add_transaction(tx)))
             block = asyncio.run(chain.mine_block(miner))
             self.assertTrue(block.verify_pow())
             self.assertEqual(block.header.transactions_root, block.calculate_transactions_root())

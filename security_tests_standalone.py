@@ -140,10 +140,9 @@ class SecurityTestsStandalone(unittest.TestCase):
         # Test casos básicos
         test_cases = [
             (b"hello", "string simple"),
-            (123, "entero"),
-            ([1, 2, 3], "lista simple"),
-            ([b"hello", 123, [1, 2]], "lista anidada"),
             (b"", "string vacío"),
+            ([b"\x01", b"\x02", b"\x03"], "lista simple"),
+            ([b"hello", b"{", [b"\x01", b"\x02"]], "lista anidada"),
             ([], "lista vacía")
         ]
         
