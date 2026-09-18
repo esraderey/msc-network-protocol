@@ -7,6 +7,8 @@ import aiohttp
 import time
 from typing import Dict, Any, Optional
 from decimal import Decimal
+from urllib.parse import urlparse
+import ipaddress
 
 class OracleSystem:
     """Sistema de Oracle descentralizado para precios"""
@@ -19,6 +21,18 @@ class OracleSystem:
 
     async def add_price_feed(self, asset: str, source_url: str):
         """Añade feed de precio para un activo"""
+        parsed = urlparse(source_url)
+        if parsed.scheme != 'https' or not parsed.hostname:
+            raise ValueError("Price feeds must use an HTTPS URL")
+        try:
+            ip = ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            # Hostnames are allowed; DNS resolution is performed by the HTTP client.
+            if not parsed.hostname.replace('.', '').replace('-', '').isalnum():
+                raise ValueError("Invalid price-feed hostname")
+        else:
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                raise ValueError("Private or reserved price-feed hosts are not allowed")
         self.price_feeds[asset] = {
             'url': source_url,
             'price': Decimal('0'),
@@ -44,7 +58,7 @@ class OracleSystem:
                         data = await response.json()
                         price = self._extract_price(data)
                         
-                        if price and self._is_price_valid(price, feed['price']):
+                        if price is not None and self._is_price_valid(price, feed['price']):
                             feed['price'] = price
                             feed['last_update'] = int(time.time())
                             feed['confidence'] = 1.0
@@ -55,17 +69,24 @@ class OracleSystem:
     def _extract_price(self, data: Dict[str, Any]) -> Optional[Decimal]:
         """Extrae precio de la respuesta JSON"""
         # Implementación simplificada - en producción sería más robusta
-        if 'price' in data:
-            return Decimal(str(data['price']))
-        elif 'result' in data and 'price' in data['result']:
-            return Decimal(str(data['result']['price']))
-        return None
+        try:
+            if 'price' in data:
+                price = Decimal(str(data['price']))
+            elif 'result' in data and 'price' in data['result']:
+                price = Decimal(str(data['result']['price']))
+            else:
+                return None
+            return price if price.is_finite() and price > 0 else None
+        except (ArithmeticError, TypeError, ValueError):
+            return None
 
     def _is_price_valid(self, new_price: Decimal, old_price: Decimal) -> bool:
         """Verifica si el nuevo precio es válido"""
         if old_price == 0:
             return True
         
+        if not new_price.is_finite() or new_price <= 0:
+            return False
         change = abs(new_price - old_price) / old_price
         return change <= self.price_threshold
 

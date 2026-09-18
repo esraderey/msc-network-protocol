@@ -50,6 +50,8 @@ class MSCNetworkV3:
         
         # Inicializar módulos
         self.network_manager = P2PNetworkManager(node_id, listen_address)
+        self.network_manager.blockchain = self.blockchain
+        self.blockchain.transaction_broadcaster = self.network_manager.broadcast_message
         self.consensus = HybridConsensus()
         self.dex = DEXProtocol("0x" + "0" * 40)
         self.lending = LendingProtocol()
@@ -61,6 +63,7 @@ class MSCNetworkV3:
         # Estado del nodo
         self.is_running = False
         self.start_time = None
+        self._background_tasks = []
         
         logger.info(f"MSC Network v3.0 initialized with node ID: {node_id}")
     
@@ -81,7 +84,10 @@ class MSCNetworkV3:
                 self._start_governance()
             ]
             
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            failures = [result for result in results if isinstance(result, Exception)]
+            if failures:
+                raise RuntimeError(f"Failed to start services: {failures[0]}")
             
             self.is_running = True
             self.start_time = time.time()
@@ -89,50 +95,56 @@ class MSCNetworkV3:
             logger.info("MSC Network v3.0 started successfully")
             
         except Exception as e:
+            for task in self._background_tasks:
+                task.cancel()
+            if self._background_tasks:
+                await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
+            await self.network_manager.stop()
             logger.error(f"Error starting MSC Network: {e}")
             raise
     
     async def stop(self):
         """Detiene todos los servicios del nodo"""
-        if not self.is_running:
+        if (not self.is_running and not self._background_tasks and
+                self.network_manager.server is None):
             logger.warning("Node is not running")
             return
         
         logger.info("Stopping MSC Network v3.0...")
         
         self.is_running = False
-        
-        # Detener servicios
-        # (Implementación simplificada)
+
+        for task in self._background_tasks:
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
+        await self.network_manager.stop()
         
         logger.info("MSC Network v3.0 stopped")
     
     async def _start_network(self):
         """Inicia servicios de red"""
-        logger.info("Starting network services...")
-        # Implementación placeholder
-        await asyncio.sleep(0.1)
-        logger.info("Network services started")
+        logger.info("Starting P2P transport listener...")
+        await self.network_manager.start()
+        logger.info("P2P listener started at %s", self.network_manager.listen_address)
     
     async def _start_oracle(self):
         """Inicia sistema de oracle"""
         logger.info("Starting oracle system...")
-        await self.oracle.start_price_updates()
+        self._background_tasks.append(asyncio.create_task(
+            self.oracle.start_price_updates(), name="msc-oracle-updates"
+        ))
         logger.info("Oracle system started")
     
     async def _start_consensus(self):
         """Inicia sistema de consenso"""
-        logger.info("Starting consensus system...")
-        # Implementación placeholder
-        await asyncio.sleep(0.1)
-        logger.info("Consensus system started")
+        logger.info("Consensus system configured")
     
     async def _start_governance(self):
         """Inicia sistema de gobernanza"""
-        logger.info("Starting governance system...")
-        # Implementación placeholder
-        await asyncio.sleep(0.1)
-        logger.info("Governance system started")
+        logger.info("Governance system configured")
     
     def get_node_info(self) -> Dict[str, Any]:
         """Obtiene información del nodo"""
@@ -155,6 +167,12 @@ class MSCNetworkV3:
         """Mina un nuevo bloque"""
         if not miner_address:
             miner_address = self.network_manager.node_id
+
+        next_height = self.blockchain.get_latest_block().header.number + 1
+        parent_hash = bytes.fromhex(self.blockchain.get_latest_block().hash[2:])
+        producer = self.consensus.select_block_producer(next_height, parent_hash)
+        if producer != "POW" and producer != miner_address:
+            raise PermissionError("Caller is not the selected block producer")
         
         return await self.blockchain.mine_block(miner_address)
     

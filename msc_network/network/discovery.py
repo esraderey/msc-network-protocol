@@ -3,7 +3,6 @@ Protocolo de descubrimiento de peers mejorado
 """
 
 import asyncio
-import random
 import time
 import logging
 from typing import List, Dict, Any, Optional
@@ -19,6 +18,7 @@ class DiscoveryProtocol:
         self.seed_nodes = []
         self.bootstrap_nodes = []
         self.discovered_peers = set()
+        self.connected_peers = {}
         self.peer_reputation = {}
         self.discovery_interval = 30
         self.last_discovery = 0
@@ -104,26 +104,30 @@ class DiscoveryProtocol:
                     continue
             
             if not self.external_ip:
-                # Fallback: intentar obtener IP de servicios HTTP
-                try:
-                    # Simular consulta HTTP para IP
-                    self.external_ip = "0.0.0.0"  # Placeholder
-                    logger.info(f"Detected external IP via HTTP: {self.external_ip}")
-                except:
-                    logger.warning("Failed to detect external IP")
+                logger.warning("External address could not be verified; NAT remains unknown")
         except Exception as e:
             logger.error(f"Error in NAT detection: {e}")
     
     async def _query_stun_server(self, server):
         """Consulta servidor STUN para obtener información de NAT"""
-        # Implementación simplificada - en producción usar librería STUN
-        # Simular respuesta STUN
-        await asyncio.sleep(0.5)  # Simular latencia de red
-        return {
-            'ip': "203.0.113." + str(random.randint(1, 254)),
-            'port': random.randint(10000, 60000),
-            'nat_type': random.choice(['open', 'symmetric', 'restricted'])
-        }
+        raise NotImplementedError("STUN discovery requires a STUN client implementation")
+
+    @staticmethod
+    def _parse_address(address: str) -> tuple:
+        if not isinstance(address, str) or not address.strip():
+            raise ValueError("peer address must be host:port")
+        value = address.strip()
+        if value.startswith('['):
+            host, separator, port = value.partition(']:')
+            host = host[1:]
+        else:
+            host, separator, port = value.rpartition(':')
+        if not separator or not host or not port.isdigit():
+            raise ValueError("peer address must be host:port")
+        port_number = int(port)
+        if not 1 <= port_number <= 65535:
+            raise ValueError("peer port must be between 1 and 65535")
+        return host, port_number
     
     async def _connect_with_retry(self, address: str, max_retries=3, is_seed=False):
         """Conecta a un peer con reintentos"""
@@ -160,13 +164,17 @@ class DiscoveryProtocol:
         return False
     
     async def connect_to_peer(self, address: str):
-        """Conecta a un peer específico (placeholder)"""
-        # En implementación real, esto establecería conexión real
-        await asyncio.sleep(0.1)  # Simular latencia de conexión
-        
-        # Simular fallo ocasional
-        if random.random() < 0.1:  # 10% de fallo
-            raise ConnectionError("Simulated connection failure")
+        """Verifica una conexión TCP real con un peer."""
+        host, port = self._parse_address(address)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=5
+        )
+        writer.write((f'{{"type":"hello","node_id":"{self.node_id}"}}\n').encode())
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+        self.connected_peers[address] = {'address': (host, port), 'last_seen': time.time()}
+        self.discovered_peers.add(address)
     
     async def _periodic_discovery(self):
         """Descubrimiento periódico de peers"""
@@ -195,19 +203,16 @@ class DiscoveryProtocol:
         self.last_discovery = time.time()
     
     async def _query_known_peers(self):
-        """Consulta peers conocidos para descubrir nuevos"""
-        # Implementación placeholder
-        pass
+        """No añade peers sin una respuesta firmada del protocolo DHT."""
+        return []
     
     async def _dns_discovery(self):
-        """Descubrimiento usando DNS"""
-        # Implementación placeholder
-        pass
+        """DNS discovery requiere un dominio de semillas configurado."""
+        return []
     
     async def _random_walk_discovery(self):
-        """Descubrimiento usando random walk"""
-        # Implementación placeholder
-        pass
+        """Random walk requiere peers DHT conectados y un protocolo FIND_NODE."""
+        return []
     
     async def _peer_maintenance(self):
         """Mantenimiento de peers conectados"""
@@ -221,14 +226,32 @@ class DiscoveryProtocol:
                 await asyncio.sleep(60)
     
     async def _ping_peers(self):
-        """Envía ping a peers para verificar conectividad"""
-        # Implementación placeholder
-        pass
+        """Comprueba conectividad TCP y elimina entradas que fallan."""
+        stale = []
+        for address in list(self.connected_peers):
+            try:
+                host, port = self._parse_address(address)
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port), timeout=5
+                )
+                writer.write((f'{{"type":"ping","node_id":"{self.node_id}"}}\n').encode())
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
+                self.connected_peers[address]['last_seen'] = time.time()
+                self._update_peer_reputation(address, 1)
+            except (OSError, asyncio.TimeoutError, ValueError):
+                stale.append(address)
+                self._update_peer_reputation(address, -5)
+        for address in stale:
+            self.connected_peers.pop(address, None)
     
     async def _cleanup_stale_peers(self):
-        """Limpia peers que no responden"""
-        # Implementación placeholder
-        pass
+        """Elimina peers que no han respondido durante dos intervalos."""
+        cutoff = time.time() - max(60, self.discovery_interval * 2)
+        for address, info in list(self.connected_peers.items()):
+            if info.get('last_seen', 0) < cutoff:
+                self.connected_peers.pop(address, None)
     
     def _update_peer_reputation(self, peer_id: str, change: int):
         """Actualiza reputación de un peer"""

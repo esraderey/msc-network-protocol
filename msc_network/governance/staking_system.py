@@ -5,7 +5,7 @@ Sistema de staking con delegación
 import time
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Dict, Any
+from typing import Dict, Any, List
 from enum import Enum
 from collections import defaultdict
 
@@ -50,8 +50,14 @@ class StakingSystem:
     def register_validator(self, address: str, commission_rate: Decimal, 
                           min_self_delegation: Decimal):
         """Registra nuevo validador"""
-        if commission_rate > Decimal('0.2'):  # Max 20%
+        if not address or not isinstance(commission_rate, Decimal) or not commission_rate.is_finite():
+            raise ValueError("Invalid validator parameters")
+        if commission_rate < 0 or commission_rate > Decimal('0.2'):  # Max 20%
             raise ValueError("Commission rate too high")
+        if not isinstance(min_self_delegation, Decimal) or min_self_delegation < 0:
+            raise ValueError("Invalid minimum self delegation")
+        if address in self.validators:
+            raise ValueError("Validator already exists")
 
         self.validators[address] = ValidatorInfo(
             address=address,
@@ -66,6 +72,8 @@ class StakingSystem:
         """Delega stake a validador"""
         if validator not in self.validators:
             raise ValueError("Validator does not exist")
+        if not delegator or not isinstance(amount, Decimal) or not amount.is_finite() or amount <= 0:
+            raise ValueError("Delegation amount must be positive")
 
         # Actualizar delegación
         self.delegations[delegator][validator] = \
@@ -85,6 +93,8 @@ class StakingSystem:
 
     def undelegate(self, delegator: str, validator: str, amount: Decimal):
         """Inicia proceso de undelegation"""
+        if not isinstance(amount, Decimal) or not amount.is_finite() or amount <= 0:
+            raise ValueError("Undelegation amount must be positive")
         if validator not in self.delegations[delegator]:
             raise ValueError("No delegation found")
 
@@ -106,6 +116,10 @@ class StakingSystem:
 
         if delegator == validator:
             self.validators[validator].self_delegation -= amount
+        info = self.validators[validator]
+        if (info.self_delegation < info.min_self_delegation or
+                info.total_delegation < BlockchainConfig.MIN_STAKE_AMOUNT * 10**18):
+            info.status = ValidatorStatus.INACTIVE
 
         # Añadir a lista de unbonding
         self.unbonding_entries.append(unbonding_entry)
@@ -136,6 +150,8 @@ class StakingSystem:
         for validator_address, reward in block_rewards.items():
             if validator_address not in self.validators:
                 continue
+            if not isinstance(reward, Decimal) or not reward.is_finite() or reward < 0:
+                raise ValueError("Invalid block reward")
 
             validator = self.validators[validator_address]
 
@@ -147,8 +163,11 @@ class StakingSystem:
             delegator_rewards = reward - commission
 
             # Distribuir proporcionalmente
+            if validator.total_delegation <= 0:
+                self.rewards_pool += validator_reward
+                continue
             for delegator, delegation in self.delegations.items():
-                if validator_address in delegation:
+                if validator_address in delegation and delegation[validator_address] > 0:
                     delegator_share = delegation[validator_address] / validator.total_delegation
                     delegator_reward = delegator_rewards * delegator_share
 

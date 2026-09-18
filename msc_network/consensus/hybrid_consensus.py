@@ -2,7 +2,6 @@
 Sistema de consenso híbrido PoW/PoS con VRF y selección segura
 """
 
-import hashlib
 from typing import List, Dict, Any
 
 from .vrf import VRF
@@ -21,11 +20,12 @@ class HybridConsensus:
         
     def register_validator(self, address: str, stake: int, private_key: bytes):
         """Registra validador con clave privada para VRF"""
-        public_key = hashlib.sha256(private_key).digest()
+        vrf = VRF(private_key)
+        public_key = vrf.public_key
         self.validator_registry.register_validator(address, stake, public_key)
         
         # Crear instancia VRF para el validador
-        self.vrf_instances[address] = VRF(private_key)
+        self.vrf_instances[address] = vrf
     
     def select_block_producer(self, block_height: int, block_hash: bytes) -> str:
         """Selecciona productor de bloque usando VRF y pesos"""
@@ -62,6 +62,11 @@ class HybridConsensus:
         
         if primary_address in self.vrf_instances:
             vrf_output, vrf_proof = self.vrf_instances[primary_address].generate_proof(vrf_input)
+
+            validator_info = self.validator_registry.validators[primary_address]
+            if not VRF.verify_proof(vrf_input, vrf_output, vrf_proof,
+                                    validator_info['public_key']):
+                return "POW"
             
             # Convertir output VRF a número
             random_value = int.from_bytes(vrf_output, 'big')
@@ -71,6 +76,7 @@ class HybridConsensus:
             
             # Verificar que el validador seleccionado puede producir bloque
             if self._can_produce_block(selected_validator, block_height):
+                self.validator_registry.validators[selected_validator]['last_selected'] = block_height
                 return selected_validator
             else:
                 # Fallback a siguiente validador
@@ -113,14 +119,16 @@ class HybridConsensus:
         return True
     
     def _select_fallback_validator(self, weighted_validators: List[tuple], vrf_input: bytes) -> str:
-        """Selecciona validador de respaldo"""
-        # Implementación simplificada - seleccionar el siguiente en la lista
-        if len(weighted_validators) > 1:
-            return weighted_validators[1][0]
+        """Selecciona un validador elegible de respaldo, o PoW."""
+        block_height = int.from_bytes(vrf_input[32:40], 'big') if len(vrf_input) >= 40 else 0
+        for address, _, _ in weighted_validators[1:]:
+            if self._can_produce_block(address, block_height):
+                self.validator_registry.validators[address]['last_selected'] = block_height
+                return address
         return "POW"
     
     def _select_pow_miner(self, block_height: int, block_hash: bytes) -> str:
-        """Selecciona minero PoW (placeholder)"""
+        """Indica que la elección PoW queda a cargo del minero externo."""
         return "POW"
     
     def update_validator_performance(self, validator_address: str, success: bool):

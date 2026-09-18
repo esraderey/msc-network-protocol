@@ -18,6 +18,8 @@
 
 </div>
 
+> **Estado verificado (2026-09-18):** el camino modular (`msc_network_main.py`) tiene correcciones P0/P1 verificadas con `p0_regression_tests.py` y `p1_regression_tests.py`. El listener P2P TCP JSON-lines ya inicia, acepta handshakes y responde `ping/pong`; la VM incluye aritmética signed/bitwise, calldata, retorno de datos, entorno de bloque, logs y canales cifrados. Sigue siendo un prototipo porque `mscnet_blockchain.py` es un monolito legado separado, la VM no ofrece compatibilidad EVM completa y la red todavía requiere autenticación criptográfica y sincronización completa para producción. Consulta el [changelog](CHANGELOG.md).
+
 ```
 ╔═══════════════════════════════════════════════════════════════════════════╗
 ║                                                                           ║
@@ -118,8 +120,8 @@ La economía del protocolo está sustentada por el token nativo **$SYNTH**, que 
 
 * **MSC Ledger (MSC Blockchain v3.0):** El núcleo de nuestra infraestructura, una blockchain de grado empresarial.
     * [cite_start]**Consenso Híbrido Avanzado (PoW/PoS):** Combina la seguridad del Proof of Work (PoW) con la eficiencia y descentralización del Proof of Stake (PoS), alternando la producción de bloques para optimizar el rendimiento y la resistencia a ataques[cite: 1]. [cite_start]La dificultad se ajusta dinámicamente para mantener un tiempo de bloque objetivo de 15 segundos[cite: 1].
-    * [cite_start]**Máquina Virtual MSC (VM):** Una máquina virtual personalizada, compatible con EVM, diseñada para la ejecución robusta y segura de contratos inteligentes complejos[cite: 1].
-    * [cite_start]**Gestión de Estado Verificable:** Utiliza un **Modified Merkle Patricia Trie** sobre LevelDB para un almacenamiento de estado eficiente, persistente y criptográficamente verificable[cite: 1].
+    * **Máquina Virtual MSC (VM):** Una máquina virtual personalizada con un subconjunto explícito de opcodes, incluyendo aritmética signed/bitwise, calldata, memoria, almacenamiento, retorno, logs y comunicación interna cifrada; no es una EVM completa.
+    * **Gestión de Estado Verificable:** Utiliza un almacén persistente autenticado con codificación RLP canónica.
     * [cite_start]**Arquitectura de Transacciones EIP-1559:** Soporte completo para transacciones con un modelo de tarifas basado en EIP-1559, incluyendo `base_fee_per_gas` y `max_priority_fee_per_gas` para una previsibilidad de costes mejorada[cite: 1].
 * **Grafo de Síntesis (G'):** La representación fundamental del conocimiento colectivo y las soluciones emergentes dentro del estado de la blockchain, modelado como una red dinámica.
 * **Sintetizadores:** Agentes de inteligencia artificial que interactúan directamente con el Grafo G', ejecutando Operaciones de Síntesis. (En desarrollo futuro).
@@ -132,7 +134,7 @@ La economía del protocolo está sustentada por el token nativo **$SYNTH**, que 
 * [cite_start]**Organización Autónoma Descentralizada (DAO):** La estructura de gobernanza en cadena que permite a los poseedores de $SYNTH proponer y votar sobre cambios en el protocolo, asignación de fondos y otras decisiones críticas[cite: 1].
 * **MSC Wallet v3.0:** Una billetera de criptomonedas de grado empresarial diseñada para interactuar sin problemas con MSC Blockchain v3.0.
     * **Soporte Multi-Tipo:** Incluye billeteras **HD (BIP32/39/44)**, **Estándar** y **Multifirma** (con umbrales de seguridad configurables).
-    * **Seguridad de Claves:** Gestión avanzada de Keystore con cifrado AES-128-CTR y derivación de claves PBKDF2.
+    * **Seguridad de Claves:** Keystore con AES-256-GCM autenticado y derivación PBKDF2; el soporte HD requiere la dependencia opcional `bip32`.
     * **Funcionalidad Completa:** Creación/importación de billeteras, envío de transacciones, consulta de saldos (MSC y ERC20), y generación de códigos QR para solicitudes de pago.
     * **Preparación para Hardware Wallets:** Esquemas para integración futura con Ledger y Trezor.
 * **Protocolos DeFi Integrados:** Un conjunto de contratos inteligentes y lógicas en cadena que forman la base de nuestro ecosistema financiero descentralizado.
@@ -164,14 +166,14 @@ La economía del protocolo está sustentada por el token nativo **$SYNTH**, que 
 
 </div>
 
-> `[SYS::STATUS]` Este proyecto ha evolucionado de una fase puramente conceptual a un **prototipo avanzado y funcional**. Gran parte de la infraestructura de la **MSC Blockchain v3.0** y la **MSC Wallet v3.0** ya está implementada y operativa.
+> `[SYS::STATUS]` Este proyecto es un **prototipo modular en validación**. Las regresiones P0/P1 cubren el camino activo, pero no implican compatibilidad EVM completa, operación de producción ni que el monolito legado comparta las correcciones.
 
 <div align="center">
 
 | 🔄 COMPONENTE | ⚙️ ESTADO | 📊 PROGRESO |
 |--------------|-----------|------------|
-| MSC Blockchain Core | `[OPERATIVO]` | ██████████ 100% |
-| MSC Wallet v3.0 | `[OPERATIVO]` | ██████████ 100% |
+| MSC Blockchain Core (modular) | `[PROTOTIPO VERIFICADO]` | ██████░░░░ 60% |
+| MSC Wallet v3.0 | `[PARCIALMENTE VERIFICADO]` | ██████░░░░ 60% |
 | Contratos DeFi | `[EN DESARROLLO]` | ████████░░ 80% |
 | Cross-Chain Bridge | `[PROTOTIPO]` | ██████░░░░ 60% |
 | Sintetizadores IA | `[INVESTIGACIÓN]` | ████░░░░░░ 40% |
@@ -295,18 +297,19 @@ $ pip install -r requirements.txt
 # ======================================================================
 # PASO 3: INICIAR NODO BLOCKCHAIN MSC
 # ======================================================================
-$ python mscnet_blockchain.py node --mine --api-port 8545 --p2p-port 30303 --data-dir ./msc_data
+$ python msc_network_main.py
+
+# Nota: mscnet_blockchain.py es el monolito legado y no representa el camino modular verificado.
 
 # Parámetros:
-#  --mine      : Habilita minería (PoW/PoS)
-#  --api-port  : Puerto API/Dashboard (default: 8545)
-#  --p2p-port  : Puerto P2P (default: 30303)
-#  --data-dir  : Directorio de datos blockchain
+# El entrypoint modular actual no expone todavía estos flags ni un dashboard HTTP.
 
 # ======================================================================
 # PASO 4: GENERAR BILLETERA HD (OPCIONAL)
 # ======================================================================
 $ python wallet.py create --type hd --password "TuContraseñaSegura"
+
+# Si falta bip32, usa --type standard o instala las dependencias completas.
 
 # ⚠️ ALERTA DE SEGURIDAD ⚠️
 # Guarda tu frase mnemotécnica en un lugar seguro

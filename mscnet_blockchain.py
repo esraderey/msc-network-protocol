@@ -269,7 +269,23 @@ class MerklePatriciaTrie:
         """Decodifica un nodo desde almacenamiento"""
         if not data:
             return None
-        return rlp_decode(data)
+        decoded = rlp_decode(data)
+        # rlp_decode devuelve (valor, bytes_restantes); el trie necesita
+        # únicamente el nodo y debe rechazar payloads concatenados.
+        if not isinstance(decoded, tuple) or len(decoded) != 2:
+            raise ValueError("Invalid encoded trie node")
+        node, remaining = decoded
+        if remaining:
+            raise ValueError("Trailing bytes in encoded trie node")
+        return node
+
+    def _is_extension(self, node) -> bool:
+        """Distingue una extensión de una hoja por su referencia almacenada."""
+        return (
+            isinstance(node, list) and len(node) == 2 and
+            isinstance(node[0], list) and isinstance(node[1], bytes) and
+            node[1] in self.db
+        )
 
     def _get_node(self, node_hash: bytes):
         """Obtiene un nodo por su hash"""
@@ -277,6 +293,12 @@ class MerklePatriciaTrie:
             return None
         data = self.db.get(node_hash)
         return self._decode_node(data) if data else None
+
+    def _resolve_node(self, reference):
+        """Resuelve tanto hashes como nodos materializados en memoria."""
+        if isinstance(reference, list):
+            return reference
+        return self._get_node(reference)
 
     def _put_node(self, node) -> bytes:
         """Almacena un nodo y devuelve su hash"""
@@ -318,30 +340,29 @@ class MerklePatriciaTrie:
         if len(node) == 2:
             # Nodo hoja o extensión
             path, value = node
-            if isinstance(path, list):
-                # Nodo hoja
-                if path == nibbles:
-                    return value
-                return None
-            else:
+            if self._is_extension(node):
                 # Nodo extensión
                 if nibbles[:len(path)] == path:
-                    return self._get_value(self._get_node(value), nibbles[len(path):])
+                    return self._get_value(self._resolve_node(value), nibbles[len(path):])
                 return None
+            # Nodo hoja
+            if path == nibbles:
+                return value
+            return None
         else:
             # Nodo rama
             if not nibbles:
                 return node[16] if len(node) > 16 else None
             nibble = nibbles[0]
             if nibble < 16 and node[nibble]:
-                return self._get_value(self._get_node(node[nibble]), nibbles[1:])
+                return self._get_value(self._resolve_node(node[nibble]), nibbles[1:])
             return None
 
     def put(self, key: bytes, value: bytes):
         """Inserta valor en el trie"""
         nibbles = self._key_to_nibbles(key)
         self.root_node = self._put_value(self.root_node, nibbles, value)
-        self.root_hash = self._put_node(self.root_node)
+        self.root_hash = self._put_node(self.root_node).hex()
 
     def _put_value(self, node, nibbles: List[int], value: bytes):
         """Recursivamente inserta valor en un nodo"""
@@ -352,22 +373,20 @@ class MerklePatriciaTrie:
         if len(node) == 2:
             # Nodo hoja o extensión
             path, node_value = node
-            if isinstance(path, list):
+            if not self._is_extension(node):
                 # Nodo hoja existente
                 if path == nibbles:
                     return [path, value]
                 else:
                     # Crear nodo rama
                     return self._create_branch_from_leaf(path, node_value, nibbles, value)
-            else:
-                # Nodo extensión
-                common_prefix = self._common_prefix(path, nibbles)
-                if common_prefix == path:
-                    # Extender el nodo
-                    return [path, self._put_value(self._get_node(node_value), nibbles[len(path):], value)]
-                else:
-                    # Crear nodo rama
-                    return self._create_branch_from_extension(path, node_value, nibbles, value)
+            # Nodo extensión
+            common_prefix = self._common_prefix(path, nibbles)
+            if common_prefix == path:
+                # Extender el nodo
+                return [path, self._put_value(self._resolve_node(node_value), nibbles[len(path):], value)]
+            # Crear nodo rama
+            return self._create_branch_from_extension(path, node_value, nibbles, value)
         else:
             # Nodo rama
             if not nibbles:
@@ -383,7 +402,7 @@ class MerklePatriciaTrie:
                 new_node = node[:]
                 if len(new_node) <= nibble:
                     new_node.extend([None] * (nibble + 1 - len(new_node)))
-                new_node[nibble] = self._put_value(self._get_node(new_node[nibble]), nibbles[1:], value)
+                new_node[nibble] = self._put_value(self._resolve_node(new_node[nibble]), nibbles[1:], value)
                 return new_node
 
     def _common_prefix(self, a: List[int], b: List[int]) -> List[int]:
@@ -459,7 +478,7 @@ class MerklePatriciaTrie:
         nibbles = self._key_to_nibbles(key)
         self.root_node = self._delete_value(self.root_node, nibbles)
         if self.root_node:
-            self.root_hash = self._put_node(self.root_node)
+            self.root_hash = self._put_node(self.root_node).hex()
         else:
             self.root_hash = None
 
@@ -470,7 +489,7 @@ class MerklePatriciaTrie:
             
         if len(node) == 2:
             path, value = node
-            if isinstance(path, list):
+            if not self._is_extension(node):
                 # Nodo hoja
                 if path == nibbles:
                     return None
@@ -478,7 +497,7 @@ class MerklePatriciaTrie:
             else:
                 # Nodo extensión
                 if nibbles[:len(path)] == path:
-                    new_child = self._delete_value(self._get_node(value), nibbles[len(path):])
+                    new_child = self._delete_value(self._resolve_node(value), nibbles[len(path):])
                     if new_child is None:
                         return None
                     return [path, self._put_node(new_child)]
@@ -493,7 +512,7 @@ class MerklePatriciaTrie:
             else:
                 nibble = nibbles[0]
                 if nibble < 16 and node[nibble]:
-                    new_child = self._delete_value(self._get_node(node[nibble]), nibbles[1:])
+                    new_child = self._delete_value(self._resolve_node(node[nibble]), nibbles[1:])
                     new_node = node[:]
                     new_node[nibble] = self._put_node(new_child) if new_child else None
                     return new_node
@@ -516,18 +535,17 @@ class MerklePatriciaTrie:
             
         if len(node) == 2:
             path, value = node
-            if isinstance(path, list):
+            if not self._is_extension(node):
                 # Nodo hoja
                 if path == nibbles:
                     proof.append(self._encode_node(node))
                     return True
                 return False
-            else:
-                # Nodo extensión
-                if nibbles[:len(path)] == path:
-                    proof.append(self._encode_node(node))
-                    return self._get_proof_recursive(self._get_node(value), nibbles[len(path):], proof)
-                return False
+            # Nodo extensión
+            if nibbles[:len(path)] == path:
+                proof.append(self._encode_node(node))
+                return self._get_proof_recursive(self._resolve_node(value), nibbles[len(path):], proof)
+            return False
         else:
             # Nodo rama
             proof.append(self._encode_node(node))
@@ -535,25 +553,46 @@ class MerklePatriciaTrie:
                 return True
             nibble = nibbles[0]
             if nibble < 16 and node[nibble]:
-                return self._get_proof_recursive(self._get_node(node[nibble]), nibbles[1:], proof)
+                return self._get_proof_recursive(self._resolve_node(node[nibble]), nibbles[1:], proof)
             return False
 
     def verify_proof(self, key: bytes, value: bytes, proof: List[bytes]) -> bool:
-        """Verifica una prueba Merkle"""
-        if not proof:
+        """Verifica estructura, hashes, ruta y valor de una prueba Merkle."""
+        if not isinstance(key, bytes) or not isinstance(value, bytes) or not proof:
             return False
-            
-        # Reconstruir el trie desde la prueba
-        current_node = self._decode_node(proof[0])
-        nibbles = self._key_to_nibbles(key)
-        
-        for i, proof_node in enumerate(proof[1:], 1):
-            decoded_node = self._decode_node(proof_node)
-            if not self._verify_proof_recursive(current_node, decoded_node, nibbles, value):
+        try:
+            nodes = [self._decode_node(encoded) for encoded in proof]
+            if not nodes or hashlib.sha3_256(proof[0]).hexdigest() != self.root_hash:
                 return False
-            current_node = decoded_node
-            
-        return True
+            remaining = self._key_to_nibbles(key)
+            expected_child_hash = None
+
+            for index, node in enumerate(nodes):
+                if expected_child_hash is not None:
+                    if hashlib.sha3_256(proof[index]).digest() != expected_child_hash:
+                        return False
+                    expected_child_hash = None
+                if len(node) == 2:
+                    path, node_value = node
+                    if self._is_extension(node):
+                        if remaining[:len(path)] != path or index + 1 >= len(nodes):
+                            return False
+                        remaining = remaining[len(path):]
+                        expected_child_hash = node_value
+                    else:
+                        return remaining == path and node_value == value
+                elif len(node) == 17:
+                    if not remaining:
+                        return node[16] == value
+                    child = node[remaining.pop(0)]
+                    if not isinstance(child, bytes) or index + 1 >= len(nodes):
+                        return False
+                    expected_child_hash = child
+                else:
+                    return False
+            return False
+        except (TypeError, ValueError, IndexError):
+            return False
 
     def _verify_proof_recursive(self, node, proof_node, nibbles: List[int], expected_value: bytes) -> bool:
         """Verifica recursivamente una prueba Merkle"""
@@ -6266,19 +6305,29 @@ ADVANCED_DASHBOARD_HTML = '''
 </html>
 '''
 
-# === RLP ENCODING (simplificado) ===
+# === RLP ENCODING (compatibilidad tipada del monolito legado) ===
+# El RLP estándar no conserva si un string de bytes representaba un entero.
+# Este archivo histórico necesita preservar ese tipo para sus nibbles del trie
+# y para sus snapshots de estado; el camino modular usa RLP canónico aparte.
+_LEGACY_INT_MARKER = b'\x00MSC_INT:'
+_LEGACY_NONE_MARKER = b'\x00MSC_NONE'
+_LEGACY_STR_MARKER = b'\x00MSC_STR:'
+_LEGACY_DICT_MARKER = b'\x00MSC_DICT:'
+
 def rlp_encode(data):
-    """Codificación RLP mejorada"""
+    """Codifica RLP y preserva int/None dentro del monolito legado."""
     if isinstance(data, int):
-        if data == 0:
-            return b'\x80'
-        elif data < 0x80:
-            return bytes([data])
-        else:
-            encoded = data.to_bytes((data.bit_length() + 7) // 8, 'big')
-            return bytes([0x80 + len(encoded)]) + encoded
+        if data < 0:
+            raise ValueError("RLP integers cannot be negative")
+        encoded = data.to_bytes(max(1, (data.bit_length() + 7) // 8), 'big')
+        return rlp_encode(_LEGACY_INT_MARKER + encoded)
+    elif data is None:
+        return rlp_encode(_LEGACY_NONE_MARKER)
+    elif isinstance(data, dict):
+        pairs = sorted(data.items(), key=lambda item: repr(item[0]))
+        return rlp_encode(_LEGACY_DICT_MARKER + rlp_encode([[key, value] for key, value in pairs]))
     elif isinstance(data, str):
-        return rlp_encode(data.encode())
+        return rlp_encode(_LEGACY_STR_MARKER + data.encode())
     elif isinstance(data, bytes):
         if len(data) == 1 and data[0] < 0x80:
             return data
@@ -6313,12 +6362,41 @@ def rlp_decode(data: bytes):
     elif first_byte < 0xb8:
         # String corto
         length = first_byte - 0x80
-        return data[1:1+length], data[1+length:]
+        value = data[1:1+length]
+        remaining = data[1+length:]
+        if value.startswith(_LEGACY_INT_MARKER):
+            raw = value[len(_LEGACY_INT_MARKER):]
+            return int.from_bytes(raw, 'big'), remaining
+        if value == _LEGACY_NONE_MARKER:
+            return None, remaining
+        if value.startswith(_LEGACY_STR_MARKER):
+            return value[len(_LEGACY_STR_MARKER):].decode('utf-8'), remaining
+        if value.startswith(_LEGACY_DICT_MARKER):
+            decoded, nested_remaining = rlp_decode(value[len(_LEGACY_DICT_MARKER):])
+            if nested_remaining:
+                raise ValueError("Trailing bytes in encoded legacy dict")
+            return {pair[0]: pair[1] for pair in decoded}, remaining
+        return value, remaining
     elif first_byte < 0xc0:
         # String largo
         length_length = first_byte - 0xb7
         length = int.from_bytes(data[1:1+length_length], 'big')
-        return data[1+length_length:1+length_length+length], data[1+length_length+length:]
+        value_start = 1 + length_length
+        value = data[value_start:value_start + length]
+        remaining = data[value_start + length:]
+        if value.startswith(_LEGACY_INT_MARKER):
+            raw = value[len(_LEGACY_INT_MARKER):]
+            return int.from_bytes(raw, 'big'), remaining
+        if value == _LEGACY_NONE_MARKER:
+            return None, remaining
+        if value.startswith(_LEGACY_STR_MARKER):
+            return value[len(_LEGACY_STR_MARKER):].decode('utf-8'), remaining
+        if value.startswith(_LEGACY_DICT_MARKER):
+            decoded, nested_remaining = rlp_decode(value[len(_LEGACY_DICT_MARKER):])
+            if nested_remaining:
+                raise ValueError("Trailing bytes in encoded legacy dict")
+            return {pair[0]: pair[1] for pair in decoded}, remaining
+        return value, remaining
     elif first_byte < 0xf8:
         # Lista corta
         length = first_byte - 0xc0

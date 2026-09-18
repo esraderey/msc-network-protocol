@@ -15,35 +15,84 @@ class MSCCompiler:
             'MUL': 0x02,
             'SUB': 0x03,
             'DIV': 0x04,
+            'SDIV': 0x05,
+            'MOD': 0x06,
+            'SMOD': 0x07,
+            'ADDMOD': 0x08,
+            'MULMOD': 0x09,
+            'EXP': 0x0a,
+            'SIGNEXTEND': 0x0b,
             'LT': 0x10,
             'GT': 0x11,
+            'SLT': 0x12,
+            'SGT': 0x13,
             'EQ': 0x14,
             'ISZERO': 0x15,
             'AND': 0x16,
             'OR': 0x17,
+            'XOR': 0x18,
+            'NOT': 0x19,
+            'BYTE': 0x1a,
+            'SHL': 0x1b,
+            'SHR': 0x1c,
+            'SAR': 0x1d,
             'SHA3': 0x20,
             'ADDRESS': 0x30,
             'BALANCE': 0x31,
             'ORIGIN': 0x32,
             'CALLER': 0x33,
             'CALLVALUE': 0x34,
+            'CALLDATALOAD': 0x35,
+            'CALLDATASIZE': 0x36,
+            'CALLDATACOPY': 0x37,
+            'CODESIZE': 0x38,
+            'CODECOPY': 0x39,
+            'GASPRICE': 0x3a,
+            'EXTCODESIZE': 0x3b,
+            'EXTCODECOPY': 0x3c,
+            'RETURNDATASIZE': 0x3d,
+            'RETURNDATACOPY': 0x3e,
+            'BLOCKHASH': 0x40,
+            'COINBASE': 0x41,
+            'TIMESTAMP': 0x42,
+            'NUMBER': 0x43,
+            'PREVRANDAO': 0x44,
+            'GASLIMIT': 0x45,
+            'CHAINID': 0x46,
+            'SELFBALANCE': 0x47,
+            'BASEFEE': 0x48,
             'POP': 0x50,
             'MLOAD': 0x51,
             'MSTORE': 0x52,
+            'MSTORE8': 0x53,
             'SLOAD': 0x54,
             'SSTORE': 0x55,
             'JUMP': 0x56,
             'JUMPI': 0x57,
             'PC': 0x58,
+            'MSIZE': 0x59,
             'GAS': 0x5a,
             'JUMPDEST': 0x5b,
+            'LOG0': 0xa0,
+            'LOG1': 0xa1,
+            'LOG2': 0xa2,
+            'LOG3': 0xa3,
+            'LOG4': 0xa4,
             'CREATE': 0xf0,
             'CALL': 0xf1,
+            'SECURE_CALL': 0xf2,
             'RETURN': 0xf3,
+            'REVERT': 0xfd,
+            'INVALID': 0xfe,
             'SELFDESTRUCT': 0xff,
         }
+
+        for index in range(1, 17):
+            self.opcodes[f'DUP{index}'] = 0x7f + index
+            self.opcodes[f'SWAP{index}'] = 0x8f + index
         
         self.push_opcodes = {
+            0: 0x5f,
             1: 0x60, 2: 0x61, 3: 0x62, 4: 0x63, 5: 0x64,
             6: 0x65, 7: 0x66, 8: 0x67, 9: 0x68, 10: 0x69,
             11: 0x6a, 12: 0x6b, 13: 0x6c, 14: 0x6d, 15: 0x6e,
@@ -71,12 +120,12 @@ class MSCCompiler:
         # Remover comentarios
         source_code = re.sub(r'//.*$', '', source_code, flags=re.MULTILINE)
         source_code = re.sub(r'/\*.*?\*/', '', source_code, flags=re.DOTALL)
-        
-        # Normalizar espacios
-        source_code = re.sub(r'\s+', ' ', source_code)
-        source_code = source_code.strip()
-        
-        return source_code
+
+        # Conservar las instrucciones separadas por línea. Compactar todo a
+        # una sola línea hacía que el parser ignorara las instrucciones 2..N.
+        return "\n".join(
+            line.strip() for line in source_code.splitlines() if line.strip()
+        )
 
     def _parse_instructions(self, source_code: str) -> List[Dict[str, Any]]:
         """Parsea instrucciones del código fuente"""
@@ -205,6 +254,10 @@ class MSCCompiler:
             if size not in self.push_opcodes:
                 raise ValueError(f"Invalid PUSH size: {size}")
             
+            if size == 0:
+                if args:
+                    raise ValueError("PUSH0 does not accept an argument")
+                return bytes([self.push_opcodes[0]])
             if not args:
                 raise ValueError("PUSH requires an argument")
             
@@ -243,9 +296,13 @@ class MSCCompiler:
             if opcode_name:
                 instructions.append(opcode_name)
                 i += 1
-            elif 0x60 <= opcode <= 0x7f:
+            elif 0x5f <= opcode <= 0x7f:
                 # Instrucción PUSH
                 size = opcode - 0x5f
+                if size == 0:
+                    instructions.append("PUSH0")
+                    i += 1
+                    continue
                 if i + size < len(bytecode):
                     value = int.from_bytes(bytecode[i+1:i+1+size], 'big')
                     instructions.append(f"PUSH{size} 0x{value:x}")

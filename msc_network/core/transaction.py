@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Tuple
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import Prehashed, decode_dss_signature
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from .types import TransactionType
 from .config import BlockchainConfig
@@ -44,7 +46,10 @@ class Transaction:
             'value': self.value,
             'data': self.data.hex() if self.data else '',
             'chainId': self.chain_id,
-            'type': self.tx_type.value
+            'type': self.tx_type.value,
+            'v': self.v,
+            'r': self.r,
+            's': self.s
         }
 
         tx_string = json.dumps(tx_data, sort_keys=True)
@@ -53,13 +58,28 @@ class Transaction:
     def sign(self, private_key: ec.EllipticCurvePrivateKey):
         """Firma la transacción con ECDSA"""
         message = self.signing_hash()
-        signature = private_key.sign(message, ec.ECDSA(hashes.SHA256()))
-
-        # Decodificar firma DER a r, s
-        r, s = self._decode_signature(signature)
+        signature = private_key.sign(message, ec.ECDSA(Prehashed(hashes.SHA256())))
+        r, s = decode_dss_signature(signature)
         self.r = r
         self.s = s
-        self.v = self.chain_id * 2 + 35  # EIP-155
+
+        # EIP-155 includes the recovery id. Determine it from the signer.
+        import ecdsa
+        raw_signature = ecdsa.util.sigencode_string(r, s, ecdsa.SECP256k1.order)
+        public_key = private_key.public_key().public_bytes(
+            Encoding.X962, PublicFormat.UncompressedPoint
+        )[1:]
+        candidates = ecdsa.VerifyingKey.from_public_key_recovery_with_digest(
+            raw_signature, message, ecdsa.SECP256k1
+        )
+        recovery_id = next(
+            (index for index, candidate in enumerate(candidates)
+             if candidate.to_string() == public_key),
+            None,
+        )
+        if recovery_id is None:
+            raise ValueError("Unable to determine ECDSA recovery id")
+        self.v = self.chain_id * 2 + 35 + recovery_id
 
     def signing_hash(self) -> bytes:
         """Hash para firmar (EIP-155)"""
@@ -79,41 +99,41 @@ class Transaction:
 
     def sender(self) -> Optional[str]:
         """Recupera la dirección del sender desde la firma ECDSA"""
-        if not all([self.v, self.r, self.s]):
+        if self.v is None or self.r is None or self.s is None:
             return None
 
         try:
-            # Recuperar clave pública desde firma ECDSA
             import ecdsa
-            
-            # Convertir r, s a enteros
-            r_int = int(self.r, 16) if isinstance(self.r, str) else int.from_bytes(self.r, 'big')
-            s_int = int(self.s, 16) if isinstance(self.s, str) else int.from_bytes(self.s, 'big')
-            v_int = int(self.v, 16) if isinstance(self.v, str) else int.from_bytes(self.v, 'big')
-            
-            # Crear firma ECDSA
-            signature = ecdsa.util.sigencode_string(r_int, s_int, 32)
-            
-            # Obtener hash de la transacción
-            tx_hash = self.signing_hash()
-            
-            # Recuperar clave pública
-            vk = ecdsa.VerifyingKey.from_public_key_recovery(
-                signature, 
-                tx_hash, 
-                ecdsa.SECP256k1,
-                hashfunc=hashlib.sha256
-            )[0]
-            
-            # Obtener dirección (últimos 20 bytes del hash de la clave pública)
-            public_key_bytes = vk.to_string()
+            def as_int(value):
+                if isinstance(value, int):
+                    return value
+                if isinstance(value, bytes):
+                    return int.from_bytes(value, "big")
+                if isinstance(value, str):
+                    return int(value, 16) if value.startswith("0x") else int(value)
+                raise TypeError("Invalid signature component")
+
+            r_int, s_int, v_int = as_int(self.r), as_int(self.s), as_int(self.v)
+            recovery_id = v_int - (self.chain_id * 2 + 35)
+            if recovery_id < 0 or recovery_id > 3:
+                return None
+            if not (1 <= r_int < ecdsa.SECP256k1.order and
+                    1 <= s_int < ecdsa.SECP256k1.order):
+                return None
+
+            signature = ecdsa.util.sigencode_string(
+                r_int, s_int, ecdsa.SECP256k1.order
+            )
+            candidates = ecdsa.VerifyingKey.from_public_key_recovery_with_digest(
+                signature, self.signing_hash(), ecdsa.SECP256k1
+            )
+            if recovery_id >= len(candidates):
+                return None
+            public_key_bytes = candidates[recovery_id].to_string()
             address_hash = hashlib.sha256(public_key_bytes).digest()
             address = address_hash[-20:]
-            
             return "0x" + address.hex()
-            
-        except Exception as e:
-            # Fallback seguro - no devolver dirección si hay error
+        except Exception:
             return None
 
     def intrinsic_gas(self) -> int:
@@ -135,7 +155,4 @@ class Transaction:
 
     def _decode_signature(self, signature: bytes) -> Tuple[int, int]:
         """Decodifica firma DER a r, s"""
-        # Implementación simplificada
-        r = int.from_bytes(signature[:32], 'big')
-        s = int.from_bytes(signature[32:64], 'big')
-        return r, s
+        return decode_dss_signature(signature)

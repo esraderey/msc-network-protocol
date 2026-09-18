@@ -1,0 +1,19 @@
+test_call_depth_limit (__main__.SecurityTests.test_call_depth_limit)
+Test: Verificar límite de profundidad de llamadas ... ok
+test_patricia_trie_implementation (__main__.SecurityTests.test_patricia_trie_implementation)
+Test: Verificar que el Patricia Trie implementa estructura real de árbol ... ok
+test_reentrancy_protection (__main__.SecurityTests.test_reentrancy_protection)
+Test: Verificar protección contra ataques de re-entrancy ... ok
+test_rlp_encoding_standards (__main__.SecurityTests.test_rlp_encoding_standards)
+Test: Verificar que RLP encoding cumple con estándares ... ok
+test_sender_cryptography_fix (__main__.SecurityTests.test_sender_cryptography_fix)
+Test: Verificar que la función sender() implementa criptografía correcta ... ok
+test_sha3_256_function (__main__.SecurityTests.test_sha3_256_function)
+Test: Verificar función SHA3-256 ... ok
+test_vm_state_reset (__main__.SecurityTests.test_vm_state_reset)
+Test: Verificar reset del estado del VM ... ok
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.034s
+
+OK

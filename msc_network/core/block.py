@@ -3,6 +3,7 @@ Clases Block y BlockHeader del blockchain MSC
 """
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -30,9 +31,26 @@ class BlockHeader:
 
     def calculate_hash(self) -> str:
         """Calcula el hash del header"""
-        header_data = f"{self.parent_hash}{self.state_root}{self.transactions_root}" \
-                     f"{self.receipts_root}{self.number}{self.timestamp}{self.nonce}"
-        return '0x' + hashlib.sha256(header_data.encode()).hexdigest()
+        header_data = {
+            "parent_hash": self.parent_hash,
+            "uncle_hash": self.uncle_hash,
+            "coinbase": self.coinbase,
+            "state_root": self.state_root,
+            "transactions_root": self.transactions_root,
+            "receipts_root": self.receipts_root,
+            "logs_bloom": self.logs_bloom.hex(),
+            "difficulty": self.difficulty,
+            "number": self.number,
+            "gas_limit": self.gas_limit,
+            "gas_used": self.gas_used,
+            "timestamp": self.timestamp,
+            "extra_data": self.extra_data.hex(),
+            "mix_hash": self.mix_hash,
+            "nonce": self.nonce,
+            "base_fee_per_gas": self.base_fee_per_gas,
+        }
+        encoded = json.dumps(header_data, sort_keys=True, separators=(",", ":")).encode()
+        return "0x" + hashlib.sha256(encoded).hexdigest()
 
 @dataclass
 class Block:
@@ -76,6 +94,8 @@ class Block:
 
     def verify_pow(self) -> bool:
         """Verifica Proof of Work"""
+        if self.header.difficulty < 1 or self.header.difficulty > 256:
+            return False
         target = 2 ** (256 - self.header.difficulty)
         block_hash = int(self.hash[2:], 16)
         return block_hash < target

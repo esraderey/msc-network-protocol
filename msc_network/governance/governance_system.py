@@ -39,11 +39,27 @@ class GovernanceSystem:
         self.proposals = {}  # proposal_id -> Proposal
         self.proposal_count = 0
         self.quorum = Decimal('0.04')  # 4% del supply
-        self.voting_period = 3 * 24 * 3600  # 3 días
+        self.voting_period = 3 * 24 * 60 * 60 // 15  # bloques, a 15 s/bloque
+        self.voting_power: Dict[str, Decimal] = {}
+        self.action_handlers = {}
+
+    def set_voting_power(self, voter: str, amount: Decimal):
+        """Registra el poder de voto obtenido del ledger/token contract."""
+        if not voter or not isinstance(amount, Decimal) or not amount.is_finite() or amount < 0:
+            raise ValueError("Invalid voting power")
+        self.voting_power[voter] = amount
+
+    def register_action(self, name: str, handler):
+        """Registra explícitamente una acción ejecutable por gobernanza."""
+        if not name or not callable(handler):
+            raise ValueError("Invalid governance action")
+        self.action_handlers[name] = handler
 
     def create_proposal(self, proposer: str, title: str, 
                        description: str, actions: List[Dict]) -> int:
         """Crea nueva propuesta"""
+        if not proposer or not title or not isinstance(actions, list):
+            raise ValueError("Invalid proposal")
         self.proposal_count += 1
         proposal_id = self.proposal_count
 
@@ -77,6 +93,11 @@ class GovernanceSystem:
         # Verificar que no ha votado antes
         if voter in proposal.voters:
             raise ValueError("Already voted")
+        if not isinstance(votes, Decimal) or not votes.is_finite() or votes <= 0:
+            raise ValueError("Votes must be positive")
+        available_votes = self.voting_power.get(voter, Decimal(0))
+        if votes > available_votes:
+            raise ValueError("Insufficient voting power")
 
         proposal.voters.add(voter)
 
@@ -94,9 +115,13 @@ class GovernanceSystem:
 
         # Ejecutar acciones
         for action in proposal.actions:
-            # Implementar ejecución de acciones
-            # Ej: cambiar parámetros, transferir fondos, etc.
-            pass
+            if not isinstance(action, dict) or action.get('name') not in self.action_handlers:
+                raise ValueError("Unregistered governance action")
+            args = action.get('args', [])
+            kwargs = action.get('kwargs', {})
+            if not isinstance(args, list) or not isinstance(kwargs, dict):
+                raise ValueError("Invalid governance action arguments")
+            self.action_handlers[action['name']](*args, **kwargs)
 
         proposal.status = ProposalStatus.EXECUTED
 
@@ -132,7 +157,9 @@ class GovernanceSystem:
             if current_block >= proposal.end_block:
                 total_votes = proposal.for_votes + proposal.against_votes
                 
-                if total_votes >= self.quorum:
+                total_power = sum(self.voting_power.values(), Decimal(0))
+                quorum_required = total_power * self.quorum
+                if total_power > 0 and total_votes >= quorum_required:
                     if proposal.for_votes > proposal.against_votes:
                         proposal.status = ProposalStatus.SUCCEEDED
                     else:

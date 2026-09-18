@@ -30,12 +30,15 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.fernet import Fernet
-import ed25519
 
 # BIP32/39/44 for HD wallets
 from mnemonic import Mnemonic
-import bip32
+try:
+    import bip32
+except ImportError:  # HD support is optional; standard and multisig remain usable.
+    bip32 = None
 from eth_account import Account
+from eth_account.messages import encode_defunct
 from eth_utils import keccak, to_checksum_address
 from web3 import Web3
 
@@ -78,6 +81,8 @@ class WalletConstants:
     # Security
     PBKDF2_ITERATIONS = 100_000
     SALT_LENGTH = 32
+    GCM_IV_LENGTH = 12
+    GCM_IV_LENGTH = 12
     
     # Transaction
     DEFAULT_GAS_LIMIT = 21_000
@@ -162,6 +167,8 @@ class HDWallet:
     
     def __init__(self, mnemonic: Optional[str] = None, passphrase: str = "", 
                  language: str = "english"):
+        if bip32 is None:
+            raise RuntimeError("HD wallet support requires the optional 'bip32' package")
         self.mnemo = Mnemonic(language)
         
         if mnemonic:
@@ -277,6 +284,8 @@ class MultiSigWallet:
             raise ValueError("Threshold cannot be greater than number of owners")
         if threshold < 1:
             raise ValueError("Threshold must be at least 1")
+        if len(set(owners)) != len(owners):
+            raise ValueError("Owners must be unique")
         
         self.threshold = threshold
         self.owners = sorted(owners)  # Sort for deterministic address
@@ -346,6 +355,21 @@ class MultiSigTransaction:
         """Add signature from owner"""
         if owner not in self.owners:
             raise ValueError("Not an owner")
+        if not isinstance(signature, str) or not signature.startswith("0x"):
+            raise ValueError("Invalid signature format")
+        payload = json.dumps(asdict(self.tx_data), sort_keys=True,
+                             separators=(",", ":"), default=str)
+        try:
+            recovered = Account.recover_message(
+                encode_defunct(text=payload), signature=signature
+            )
+            expected = owner
+            if owner.startswith(WalletConstants.MSC_ADDRESS_PREFIX):
+                expected = "0x" + owner[len(WalletConstants.MSC_ADDRESS_PREFIX):]
+            if Web3.to_checksum_address(recovered) != Web3.to_checksum_address(expected):
+                raise ValueError("Signature does not belong to owner")
+        except Exception as exc:
+            raise ValueError("Invalid owner signature") from exc
         self.signatures[owner] = signature
     
     def is_ready(self) -> bool:
@@ -366,8 +390,12 @@ class Keystore:
     
     def encrypt_key(self, private_key: Union[bytes, SigningKey], password: str) -> Dict[str, Any]:
         """Encrypt private key with password"""
+        if not isinstance(password, str) or not password:
+            raise ValueError("Password must be non-empty")
         if isinstance(private_key, SigningKey):
             private_key = private_key.to_string()
+        if not isinstance(private_key, bytes) or len(private_key) != 32:
+            raise ValueError("Private key must be 32 bytes")
         
         # Generate salt
         salt = os.urandom(WalletConstants.SALT_LENGTH)
@@ -383,10 +411,10 @@ class Keystore:
         key = kdf.derive(password.encode())
         
         # Encrypt private key
-        iv = os.urandom(16)
+        iv = os.urandom(WalletConstants.GCM_IV_LENGTH)
         cipher = Cipher(
             algorithms.AES(key),
-            modes.CTR(iv),
+            modes.GCM(iv),
             backend=default_backend()
         )
         encryptor = cipher.encryptor()
@@ -402,14 +430,15 @@ class Keystore:
                 "cipherparams": {
                     "iv": base64.b64encode(iv).decode()
                 },
-                "cipher": "aes-128-ctr",
+                "cipher": "aes-256-gcm",
                 "kdf": "pbkdf2",
                 "kdfparams": {
                     "dklen": 32,
                     "salt": base64.b64encode(salt).decode(),
                     "c": WalletConstants.PBKDF2_ITERATIONS,
                     "prf": "hmac-sha256"
-                }
+                },
+                "tag": base64.b64encode(encryptor.tag).decode()
             }
         }
         
@@ -417,12 +446,17 @@ class Keystore:
     
     def decrypt_key(self, keystore: Dict[str, Any], password: str) -> SigningKey:
         """Decrypt private key from keystore"""
+        if not isinstance(password, str) or not password:
+            raise ValueError("Password must be non-empty")
         crypto = keystore["crypto"]
+        if crypto.get("cipher") != "aes-256-gcm":
+            raise ValueError("Unauthenticated legacy keystore format is unsupported")
         
         # Decode parameters
         salt = base64.b64decode(crypto["kdfparams"]["salt"])
         iv = base64.b64decode(crypto["cipherparams"]["iv"])
         ciphertext = base64.b64decode(crypto["ciphertext"])
+        tag = base64.b64decode(crypto["tag"])
         
         # Derive key from password
         kdf = PBKDF2HMAC(
@@ -437,12 +471,14 @@ class Keystore:
         # Decrypt
         cipher = Cipher(
             algorithms.AES(key),
-            modes.CTR(iv),
+            modes.GCM(iv, tag),
             backend=default_backend()
         )
         decryptor = cipher.decryptor()
         private_key_bytes = decryptor.update(ciphertext) + decryptor.finalize()
         
+        if len(private_key_bytes) != 32:
+            raise ValueError("Invalid private key length")
         return SigningKey.from_string(private_key_bytes, curve=SECP256k1)
     
     def save_keystore(self, keystore: Dict[str, Any], filename: Optional[str] = None) -> str:
@@ -451,7 +487,11 @@ class Keystore:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"UTC--{timestamp}--{keystore['address']}"
         
-        filepath = self.keystore_dir / filename
+        candidate = Path(filename)
+        if candidate.name != filename or candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError("Invalid keystore filename")
+        filepath = self.keystore_dir / candidate
+        self.keystore_dir.mkdir(parents=True, exist_ok=True)
         
         with open(filepath, 'w') as f:
             json.dump(keystore, f, indent=2)
@@ -461,7 +501,10 @@ class Keystore:
     
     def load_keystore(self, filename: str) -> Dict[str, Any]:
         """Load keystore from file"""
-        filepath = self.keystore_dir / filename
+        candidate = Path(filename)
+        if candidate.name != filename or candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError("Invalid keystore filename")
+        filepath = self.keystore_dir / candidate
         
         with open(filepath, 'r') as f:
             keystore = json.load(f)
@@ -509,6 +552,7 @@ class MSCWallet:
         self.accounts: Dict[str, AccountInfo] = {}
         self.tokens: Dict[str, TokenBalance] = {}
         self.transaction_history: List[SignedTransaction] = []
+        self._keystore_paths: Dict[str, str] = {}
         
         # Initialize based on wallet type
         if wallet_type == WalletType.HD:
@@ -534,6 +578,7 @@ class MSCWallet:
             master_private_key = self.hd_wallet.master_key.private_key.to_bytes()
             keystore = self.keystore.encrypt_key(master_private_key, password)
             keystore_path = self.keystore.save_keystore(keystore)
+            self._keystore_paths[account.address] = keystore_path
             
             return {
                 "mnemonic": self.hd_wallet.mnemonic,
@@ -558,6 +603,7 @@ class MSCWallet:
             # Encrypt and save
             keystore = self.keystore.encrypt_key(private_key, password)
             keystore_path = self.keystore.save_keystore(keystore)
+            self._keystore_paths[address] = keystore_path
             
             return {
                 "address": address,
@@ -581,6 +627,7 @@ class MSCWallet:
         )
         
         self.accounts[account.address] = account
+        self._keystore_paths[account.address] = keystore_path
         return account
     
     def import_mnemonic(self, mnemonic: str, password: str, passphrase: str = "") -> Dict[str, Any]:
@@ -598,6 +645,7 @@ class MSCWallet:
         master_private_key = self.hd_wallet.master_key.private_key.to_bytes()
         keystore = self.keystore.encrypt_key(master_private_key, password)
         keystore_path = self.keystore.save_keystore(keystore)
+        self._keystore_paths[account.address] = keystore_path
         
         return {
             "address": account.address,
@@ -868,17 +916,19 @@ class MSCWallet:
     def export_private_key(self, address: str, password: str) -> str:
         """Export private key for address (DANGEROUS)"""
         logger.warning("Exporting private key - handle with extreme care!")
-        
-        # This would require the password to decrypt the keystore
-        # Implementation depends on how keys are stored
-        
-        # For HD wallet
-        if self.hd_wallet and address in self.accounts:
+        if not password:
+            raise ValueError("Password is required to export a private key")
+        keystore_path = self._keystore_paths.get(address)
+        if not keystore_path or address not in self.accounts:
+            raise ValueError("No authenticated keystore for address")
+        with open(keystore_path, 'r') as file:
+            keystore = json.load(file)
+        decrypted = self.keystore.decrypt_key(keystore, password)
+        if self.hd_wallet:
             account = self.accounts[address]
             private_key = self.hd_wallet.get_private_key(account.index or 0)
             return private_key.to_string().hex()
-        
-        raise NotImplementedError("Private key export not implemented for this wallet type")
+        return decrypted.to_string().hex()
     
     def _generate_address(self, public_key: VerifyingKey) -> str:
         """Generate MSC address from public key"""
